@@ -89,7 +89,7 @@ def init_db():
     """
 
     # Import models so SQLAlchemy knows about all tables.
-    from models import (
+    from .models import (
         User,
         Document,
         Chunk,

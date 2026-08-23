@@ -12,16 +12,28 @@ from anthropic import (
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
-from embedding_service import generate_embedding
-from models import Chunk, Document
+from .embedding_service import generate_embedding
+from backend.models import Chunk, Document
 
+
+# =========================================================
+# LOAD ENVIRONMENT VARIABLES
+# =========================================================
 
 load_dotenv()
 
 
+# =========================================================
+# RAG SETTINGS
+# =========================================================
+
 TOP_K = 5
 MINIMUM_SIMILARITY = 0.20
 
+
+# =========================================================
+# SYSTEM PROMPT
+# =========================================================
 
 SYSTEM_PROMPT = """
 You are StudyMate, an AI study assistant for university students.
@@ -40,6 +52,10 @@ Rules:
 """.strip()
 
 
+# =========================================================
+# RETRIEVED CHUNK
+# =========================================================
+
 @dataclass
 class RetrievedChunk:
     id: UUID
@@ -48,7 +64,16 @@ class RetrievedChunk:
     similarity: float
 
 
+# =========================================================
+# ANTHROPIC CLIENT
+# =========================================================
+
 def get_anthropic_client() -> Anthropic:
+    """
+    Create an Anthropic client using the API key
+    stored in the .env file.
+    """
+
     api_key = os.getenv("ANTHROPIC_API_KEY")
 
     if not api_key:
@@ -59,6 +84,10 @@ def get_anthropic_client() -> Anthropic:
     return Anthropic(api_key=api_key)
 
 
+# =========================================================
+# RETRIEVE RELEVANT CHUNKS
+# =========================================================
+
 def retrieve_relevant_chunks(
     db: Session,
     document_id: UUID,
@@ -66,20 +95,40 @@ def retrieve_relevant_chunks(
     top_k: int = TOP_K,
 ) -> list[RetrievedChunk]:
     """
-    Retrieve the chunks most semantically similar to the question.
+    Retrieve the chunks most semantically similar
+    to the student's question.
     """
-    if not question or not question.strip():
-        raise ValueError("Question cannot be empty")
 
-    query_embedding = generate_embedding(question)
+    if not question or not question.strip():
+        raise ValueError(
+            "Question cannot be empty"
+        )
+
+    # -----------------------------------------------------
+    # Generate embedding for the question
+    # -----------------------------------------------------
+
+    query_embedding = generate_embedding(
+        question
+    )
+
+    # -----------------------------------------------------
+    # Calculate cosine distance
+    # -----------------------------------------------------
 
     distance = Chunk.embedding.cosine_distance(
         query_embedding
     ).label("distance")
 
+    # -----------------------------------------------------
+    # Retrieve closest chunks
+    # -----------------------------------------------------
+
     results = (
         db.query(Chunk, distance)
-        .filter(Chunk.document_id == document_id)
+        .filter(
+            Chunk.document_id == document_id
+        )
         .order_by(distance)
         .limit(top_k)
         .all()
@@ -87,8 +136,15 @@ def retrieve_relevant_chunks(
 
     retrieved_chunks = []
 
+    # -----------------------------------------------------
+    # Convert cosine distance to similarity
+    # -----------------------------------------------------
+
     for chunk, cosine_distance in results:
-        similarity = 1.0 - float(cosine_distance)
+
+        similarity = (
+            1.0 - float(cosine_distance)
+        )
 
         retrieved_chunks.append(
             RetrievedChunk(
@@ -102,36 +158,67 @@ def retrieve_relevant_chunks(
     return retrieved_chunks
 
 
+# =========================================================
+# BUILD CONTEXT
+# =========================================================
+
 def build_context(
     chunks: list[RetrievedChunk],
 ) -> str:
     """
-    Format the retrieved chunks and their page numbers for Claude.
+    Format retrieved chunks and their page numbers
+    before sending them to Claude.
     """
+
     context_sections = []
 
-    for number, chunk in enumerate(chunks, start=1):
+    for number, chunk in enumerate(
+        chunks,
+        start=1,
+    ):
         section = (
-            f"Source {number} - Page {chunk.page_number}\n"
+            f"Source {number} - Page "
+            f"{chunk.page_number}\n"
             f"{chunk.content}"
         )
 
-        context_sections.append(section)
+        context_sections.append(
+            section
+        )
 
-    return "\n\n---\n\n".join(context_sections)
+    return "\n\n---\n\n".join(
+        context_sections
+    )
 
+
+# =========================================================
+# GENERATE ANSWER WITH CLAUDE
+# =========================================================
 
 def generate_answer_with_claude(
     question: str,
     chunks: list[RetrievedChunk],
 ) -> str:
     """
-    Ask Claude to answer using only the retrieved context.
+    Ask Claude to answer the student's question
+    using only the retrieved document context.
     """
+
     if not chunks:
-        return "I could not find this information in your document."
+        return (
+            "I could not find this information "
+            "in your document."
+        )
+
+    # -----------------------------------------------------
+    # Build document context
+    # -----------------------------------------------------
 
     context = build_context(chunks)
+
+    # -----------------------------------------------------
+    # Build user prompt
+    # -----------------------------------------------------
 
     user_prompt = f"""
 DOCUMENT CONTEXT:
@@ -146,14 +233,28 @@ Answer the question using only the document context.
 Include page citations such as [Page 3].
 """.strip()
 
+    # -----------------------------------------------------
+    # Create Anthropic client
+    # -----------------------------------------------------
+
     client = get_anthropic_client()
 
-    claude_model = os.getenv("CLAUDE_MODEL")
+    # -----------------------------------------------------
+    # Get Claude model from .env
+    # -----------------------------------------------------
+
+    claude_model = os.getenv(
+        "CLAUDE_MODEL"
+    )
 
     if not claude_model:
         raise RuntimeError(
             "CLAUDE_MODEL is missing from the .env file"
         )
+
+    # -----------------------------------------------------
+    # Call Claude
+    # -----------------------------------------------------
 
     try:
         response = client.messages.create(
@@ -184,11 +285,15 @@ Include page citations such as [Page 3].
         raise RuntimeError(
             "Could not connect to the AI service."
         ) from error
-
+    
     except APIStatusError as error:
         raise RuntimeError(
-            "The AI service returned an error."
+            f"The AI service returned an error: {error}"
         ) from error
+
+    # -----------------------------------------------------
+    # Extract text from Claude response
+    # -----------------------------------------------------
 
     answer_parts = [
         block.text
@@ -196,7 +301,9 @@ Include page citations such as [Page 3].
         if block.type == "text"
     ]
 
-    answer = "\n".join(answer_parts).strip()
+    answer = "\n".join(
+        answer_parts
+    ).strip()
 
     if not answer:
         raise RuntimeError(
@@ -205,6 +312,10 @@ Include page citations such as [Page 3].
 
     return answer
 
+
+# =========================================================
+# COMPLETE RAG PIPELINE
+# =========================================================
 
 def answer_question(
     db: Session,
@@ -215,26 +326,44 @@ def answer_question(
     Complete RAG pipeline:
 
     1. Check document readiness
-    2. Embed the question
+    2. Generate question embedding
     3. Retrieve relevant chunks
-    4. Check similarity
-    5. Send context to Claude
-    6. Return answer and sources
+    4. Calculate similarity
+    5. Filter irrelevant chunks
+    6. Send relevant context to Claude
+    7. Return answer and sources
     """
+
+    # -----------------------------------------------------
+    # Find document
+    # -----------------------------------------------------
+
     document = (
         db.query(Document)
-        .filter(Document.id == document_id)
+        .filter(
+            Document.id == document_id
+        )
         .first()
     )
 
     if not document:
-        raise ValueError("Document not found")
+        raise ValueError(
+            "Document not found"
+        )
+
+    # -----------------------------------------------------
+    # Make sure document is processed
+    # -----------------------------------------------------
 
     if document.status != "ready":
         raise ValueError(
-            f"Document is not ready. Current status: "
-            f"{document.status}"
+            f"Document is not ready. "
+            f"Current status: {document.status}"
         )
+
+    # -----------------------------------------------------
+    # Retrieve relevant chunks
+    # -----------------------------------------------------
 
     chunks = retrieve_relevant_chunks(
         db=db,
@@ -242,11 +371,20 @@ def answer_question(
         question=question,
     )
 
+    # -----------------------------------------------------
+    # Filter by similarity
+    # -----------------------------------------------------
+
     relevant_chunks = [
         chunk
         for chunk in chunks
-        if chunk.similarity >= MINIMUM_SIMILARITY
+        if chunk.similarity
+        >= MINIMUM_SIMILARITY
     ]
+
+    # -----------------------------------------------------
+    # No relevant information found
+    # -----------------------------------------------------
 
     if not relevant_chunks:
         return {
@@ -257,20 +395,35 @@ def answer_question(
             "sources": [],
         }
 
+    # -----------------------------------------------------
+    # Generate answer with Claude
+    # -----------------------------------------------------
+
     answer = generate_answer_with_claude(
         question=question,
         chunks=relevant_chunks,
     )
+
+    # -----------------------------------------------------
+    # Build sources
+    # -----------------------------------------------------
 
     sources = [
         {
             "chunk_id": str(chunk.id),
             "page_number": chunk.page_number,
             "content": chunk.content,
-            "similarity": round(chunk.similarity, 4),
+            "similarity": round(
+                chunk.similarity,
+                4,
+            ),
         }
         for chunk in relevant_chunks
     ]
+
+    # -----------------------------------------------------
+    # Return final RAG response
+    # -----------------------------------------------------
 
     return {
         "answer": answer,

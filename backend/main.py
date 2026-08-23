@@ -13,12 +13,12 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 
-from database import (
+from .database import (
     init_db,
     get_db,
 )
 
-from models import (
+from .models import (
     User,
     Document,
     Conversation,
@@ -28,7 +28,7 @@ from models import (
     QuizAttempt,
 )
 
-from auth import (
+from .auth import (
     hash_password,
     verify_password,
     create_access_token,

@@ -5,9 +5,9 @@ from uuid import UUID
 from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
-from database import SessionLocal
-from embedding_service import generate_embeddings
-from models import Chunk, Document
+from backend.database import SessionLocal
+from .embedding_service import generate_embeddings
+from backend.models import Chunk, Document
 
 
 CHUNK_SIZE = 700
@@ -52,8 +52,8 @@ def split_text_into_chunks(
     """
     Split text into overlapping chunks.
 
-    The function tries to end chunks at a sentence or space rather
-    than cutting directly in the middle of a word.
+    The function tries to end chunks at a sentence or space
+    rather than cutting directly in the middle of a word.
     """
     if not text:
         return []
@@ -65,19 +65,28 @@ def split_text_into_chunks(
         raise ValueError("overlap cannot be negative")
 
     if overlap >= chunk_size:
-        raise ValueError("overlap must be smaller than chunk_size")
+        raise ValueError(
+            "overlap must be smaller than chunk_size"
+        )
 
     chunks = []
     start = 0
     text_length = len(text)
 
     while start < text_length:
-        target_end = min(start + chunk_size, text_length)
+        target_end = min(
+            start + chunk_size,
+            text_length,
+        )
+
         end = target_end
 
         if target_end < text_length:
             search_start = start + (chunk_size // 2)
-            section = text[search_start:target_end]
+
+            section = text[
+                search_start:target_end
+            ]
 
             # Prefer ending after sentence punctuation
             sentence_positions = [
@@ -87,10 +96,17 @@ def split_text_into_chunks(
                 section.rfind("\n"),
             ]
 
-            best_position = max(sentence_positions)
+            best_position = max(
+                sentence_positions
+            )
 
             if best_position != -1:
-                end = search_start + best_position + 1
+                end = (
+                    search_start
+                    + best_position
+                    + 1
+                )
+
             else:
                 # Otherwise, end at the last available space
                 last_space = text.rfind(
@@ -140,6 +156,7 @@ def extract_pdf_chunks(
         )
 
     reader = PdfReader(str(path))
+
     extracted_chunks = []
     chunk_index = 0
 
@@ -148,7 +165,10 @@ def extract_pdf_chunks(
         start=1,
     ):
         raw_text = page.extract_text() or ""
-        cleaned_text = clean_text(raw_text)
+
+        cleaned_text = clean_text(
+            raw_text
+        )
 
         if not cleaned_text:
             continue
@@ -178,14 +198,20 @@ def process_document(
     document: Document,
 ) -> int:
     """
-    Process one document and store its chunks and embeddings.
+    Process one document and store its chunks
+    and embeddings.
 
     Returns the number of stored chunks.
     """
+
     document.status = "processing"
     db.commit()
 
     try:
+        # -------------------------------------------------
+        # Extract PDF text and create chunks
+        # -------------------------------------------------
+
         extracted_chunks = extract_pdf_chunks(
             document.file_path
         )
@@ -195,19 +221,38 @@ def process_document(
                 "No readable text was found in the PDF"
             )
 
+        # -------------------------------------------------
+        # Generate embeddings
+        # -------------------------------------------------
+
         chunk_texts = [
             item["content"]
             for item in extracted_chunks
         ]
 
-        embeddings = generate_embeddings(chunk_texts)
+        embeddings = generate_embeddings(
+            chunk_texts
+        )
 
-        # Delete old chunks if the document is processed again
+        # -------------------------------------------------
+        # Delete old chunks if document is
+        # processed again
+        # -------------------------------------------------
+
         (
             db.query(Chunk)
-            .filter(Chunk.document_id == document.id)
-            .delete(synchronize_session=False)
+            .filter(
+                Chunk.document_id
+                == document.id
+            )
+            .delete(
+                synchronize_session=False
+            )
         )
+
+        # -------------------------------------------------
+        # Store chunks + embeddings
+        # -------------------------------------------------
 
         for item, embedding in zip(
             extracted_chunks,
@@ -216,16 +261,34 @@ def process_document(
             chunk = Chunk(
                 document_id=document.id,
                 content=item["content"],
-                page_number=item["page_number"],
-                chunk_index=item["chunk_index"],
+                page_number=item[
+                    "page_number"
+                ],
+                chunk_index=item[
+                    "chunk_index"
+                ],
                 embedding=embedding,
             )
 
             db.add(chunk)
 
-        reader = PdfReader(document.file_path)
-        document.page_count = len(reader.pages)
+        # -------------------------------------------------
+        # Update document information
+        # -------------------------------------------------
+
+        reader = PdfReader(
+            document.file_path
+        )
+
+        document.page_count = len(
+            reader.pages
+        )
+
         document.status = "ready"
+
+        # -------------------------------------------------
+        # Commit everything
+        # -------------------------------------------------
 
         db.commit()
         db.refresh(document)
@@ -233,11 +296,18 @@ def process_document(
         return len(extracted_chunks)
 
     except Exception:
+        # -------------------------------------------------
+        # Rollback failed transaction
+        # -------------------------------------------------
+
         db.rollback()
 
         document = (
             db.query(Document)
-            .filter(Document.id == document.id)
+            .filter(
+                Document.id
+                == document.id
+            )
             .first()
         )
 
@@ -254,22 +324,42 @@ def process_document_background(
     """
     Background-task wrapper.
 
-    It creates a new database session because the request session
-    will be closed after the HTTP response is returned.
+    It creates a new database session because
+    the request session will be closed after
+    the HTTP response is returned.
     """
+
     db = SessionLocal()
 
     try:
+        # -------------------------------------------------
+        # Find document
+        # -------------------------------------------------
+
         document = (
             db.query(Document)
-            .filter(Document.id == document_id)
+            .filter(
+                Document.id
+                == document_id
+            )
             .first()
         )
 
         if not document:
             return
 
-        process_document(db, document)
+        # -------------------------------------------------
+        # Process document
+        # -------------------------------------------------
+
+        process_document(
+            db,
+            document,
+        )
 
     finally:
+        # -------------------------------------------------
+        # Always close database session
+        # -------------------------------------------------
+
         db.close()
