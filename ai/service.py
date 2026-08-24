@@ -1,18 +1,55 @@
+import json
+import os
 import re
 from pathlib import Path
 from uuid import UUID
 
+from anthropic import (
+    Anthropic,
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    RateLimitError,
+)
+from dotenv import load_dotenv
 from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from backend.database import SessionLocal
+from backend.models import (
+    Chunk,
+    Document,
+    Quiz,
+    QuizQuestion,
+)
 from .embedding_service import generate_embeddings
-from backend.models import Chunk, Document
 
+
+# =========================================================
+# LOAD ENVIRONMENT VARIABLES
+# =========================================================
+
+load_dotenv()
+
+
+# =========================================================
+# DOCUMENT PROCESSING SETTINGS
+# =========================================================
 
 CHUNK_SIZE = 700
 CHUNK_OVERLAP = 100
 
+
+# =========================================================
+# QUIZ SETTINGS
+# =========================================================
+
+DEFAULT_QUESTION_COUNT = 10
+
+
+# =========================================================
+# CLEAN PDF TEXT
+# =========================================================
 
 def clean_text(text: str) -> str:
     """
@@ -22,6 +59,7 @@ def clean_text(text: str) -> str:
     - Remove excessive whitespace
     - Keep paragraph boundaries where possible
     """
+
     if not text:
         return ""
 
@@ -30,19 +68,39 @@ def clean_text(text: str) -> str:
     text = text.replace("\r", "\n")
 
     # Join words split with a hyphen at the end of a line
-    text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)
+    text = re.sub(
+        r"(\w)-\n(\w)",
+        r"\1\2",
+        text,
+    )
 
     # Replace single line breaks with spaces
-    text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
+    text = re.sub(
+        r"(?<!\n)\n(?!\n)",
+        " ",
+        text,
+    )
 
     # Collapse repeated spaces and tabs
-    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(
+        r"[ \t]+",
+        " ",
+        text,
+    )
 
     # Collapse excessive blank lines
-    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(
+        r"\n{3,}",
+        "\n\n",
+        text,
+    )
 
     return text.strip()
 
+
+# =========================================================
+# SPLIT TEXT INTO CHUNKS
+# =========================================================
 
 def split_text_into_chunks(
     text: str,
@@ -52,17 +110,23 @@ def split_text_into_chunks(
     """
     Split text into overlapping chunks.
 
-    The function tries to end chunks at a sentence or space
-    rather than cutting directly in the middle of a word.
+    The function tries to end chunks at a sentence
+    or space rather than cutting directly in the
+    middle of a word.
     """
+
     if not text:
         return []
 
     if chunk_size <= 0:
-        raise ValueError("chunk_size must be greater than zero")
+        raise ValueError(
+            "chunk_size must be greater than zero"
+        )
 
     if overlap < 0:
-        raise ValueError("overlap cannot be negative")
+        raise ValueError(
+            "overlap cannot be negative"
+        )
 
     if overlap >= chunk_size:
         raise ValueError(
@@ -70,10 +134,12 @@ def split_text_into_chunks(
         )
 
     chunks = []
+
     start = 0
     text_length = len(text)
 
     while start < text_length:
+
         target_end = min(
             start + chunk_size,
             text_length,
@@ -82,7 +148,10 @@ def split_text_into_chunks(
         end = target_end
 
         if target_end < text_length:
-            search_start = start + (chunk_size // 2)
+
+            search_start = (
+                start + chunk_size // 2
+            )
 
             section = text[
                 search_start:target_end
@@ -101,6 +170,7 @@ def split_text_into_chunks(
             )
 
             if best_position != -1:
+
                 end = (
                     search_start
                     + best_position
@@ -108,7 +178,8 @@ def split_text_into_chunks(
                 )
 
             else:
-                # Otherwise, end at the last available space
+
+                # Otherwise, end at the last space
                 last_space = text.rfind(
                     " ",
                     search_start,
@@ -118,7 +189,9 @@ def split_text_into_chunks(
                 if last_space != -1:
                     end = last_space
 
-        chunk = text[start:end].strip()
+        chunk = text[
+            start:end
+        ].strip()
 
         if chunk:
             chunks.append(chunk)
@@ -128,7 +201,7 @@ def split_text_into_chunks(
 
         next_start = end - overlap
 
-        # Protection against an infinite loop
+        # Protection against infinite loop
         if next_start <= start:
             next_start = end
 
@@ -137,6 +210,10 @@ def split_text_into_chunks(
     return chunks
 
 
+# =========================================================
+# EXTRACT PDF CHUNKS
+# =========================================================
+
 def extract_pdf_chunks(
     file_path: str,
 ) -> list[dict]:
@@ -144,10 +221,12 @@ def extract_pdf_chunks(
     Extract and chunk a PDF page by page.
 
     Each returned chunk contains:
+
     - content
     - page_number
     - chunk_index
     """
+
     path = Path(file_path)
 
     if not path.exists():
@@ -155,16 +234,23 @@ def extract_pdf_chunks(
             f"PDF file was not found: {file_path}"
         )
 
-    reader = PdfReader(str(path))
+    reader = PdfReader(
+        str(path)
+    )
 
     extracted_chunks = []
+
     chunk_index = 0
 
     for page_number, page in enumerate(
         reader.pages,
         start=1,
     ):
-        raw_text = page.extract_text() or ""
+
+        raw_text = (
+            page.extract_text()
+            or ""
+        )
 
         cleaned_text = clean_text(
             raw_text
@@ -173,13 +259,16 @@ def extract_pdf_chunks(
         if not cleaned_text:
             continue
 
-        page_chunks = split_text_into_chunks(
-            cleaned_text,
-            chunk_size=CHUNK_SIZE,
-            overlap=CHUNK_OVERLAP,
+        page_chunks = (
+            split_text_into_chunks(
+                cleaned_text,
+                chunk_size=CHUNK_SIZE,
+                overlap=CHUNK_OVERLAP,
+            )
         )
 
         for chunk_text in page_chunks:
+
             extracted_chunks.append(
                 {
                     "content": chunk_text,
@@ -193,6 +282,10 @@ def extract_pdf_chunks(
     return extracted_chunks
 
 
+# =========================================================
+# PROCESS DOCUMENT
+# =========================================================
+
 def process_document(
     db: Session,
     document: Document,
@@ -201,19 +294,32 @@ def process_document(
     Process one document and store its chunks
     and embeddings.
 
-    Returns the number of stored chunks.
+    Steps:
+
+    1. Extract PDF text
+    2. Split into chunks
+    3. Generate embeddings
+    4. Store chunks in PostgreSQL
+    5. Mark document as ready
+
+    Returns:
+        Number of stored chunks.
     """
 
     document.status = "processing"
+
     db.commit()
 
     try:
+
         # -------------------------------------------------
         # Extract PDF text and create chunks
         # -------------------------------------------------
 
-        extracted_chunks = extract_pdf_chunks(
-            document.file_path
+        extracted_chunks = (
+            extract_pdf_chunks(
+                document.file_path
+            )
         )
 
         if not extracted_chunks:
@@ -258,6 +364,7 @@ def process_document(
             extracted_chunks,
             embeddings,
         ):
+
             chunk = Chunk(
                 document_id=document.id,
                 content=item["content"],
@@ -291,11 +398,13 @@ def process_document(
         # -------------------------------------------------
 
         db.commit()
+
         db.refresh(document)
 
         return len(extracted_chunks)
 
     except Exception:
+
         # -------------------------------------------------
         # Rollback failed transaction
         # -------------------------------------------------
@@ -312,11 +421,17 @@ def process_document(
         )
 
         if document:
+
             document.status = "failed"
+
             db.commit()
 
         raise
 
+
+# =========================================================
+# BACKGROUND DOCUMENT PROCESSING
+# =========================================================
 
 def process_document_background(
     document_id: UUID,
@@ -325,13 +440,14 @@ def process_document_background(
     Background-task wrapper.
 
     It creates a new database session because
-    the request session will be closed after
-    the HTTP response is returned.
+    the request session is closed after the
+    HTTP response is returned.
     """
 
     db = SessionLocal()
 
     try:
+
         # -------------------------------------------------
         # Find document
         # -------------------------------------------------
@@ -358,8 +474,656 @@ def process_document_background(
         )
 
     finally:
+
         # -------------------------------------------------
         # Always close database session
         # -------------------------------------------------
 
         db.close()
+
+
+# =========================================================
+# ANTHROPIC CLIENT
+# =========================================================
+
+def get_anthropic_client() -> Anthropic:
+    """
+    Create Anthropic client using the API key
+    stored in the .env file.
+    """
+
+    api_key = os.getenv(
+        "ANTHROPIC_API_KEY"
+    )
+
+    if not api_key:
+
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is missing "
+            "from the .env file"
+        )
+
+    return Anthropic(
+        api_key=api_key
+    )
+
+
+# =========================================================
+# GET CLAUDE MODEL
+# =========================================================
+
+def get_claude_model() -> str:
+    """
+    Get Claude model ID from .env.
+    """
+
+    model = os.getenv(
+        "CLAUDE_MODEL"
+    )
+
+    if not model:
+
+        raise RuntimeError(
+            "CLAUDE_MODEL is missing "
+            "from the .env file"
+        )
+
+    return model
+
+
+# =========================================================
+# GET DOCUMENT CHUNKS
+# =========================================================
+
+def get_document_chunks(
+    db: Session,
+    document_id: UUID,
+) -> list[Chunk]:
+    """
+    Get all chunks belonging to a document.
+
+    Chunks are ordered according to their
+    original chunk_index.
+    """
+
+    chunks = (
+        db.query(Chunk)
+        .filter(
+            Chunk.document_id
+            == document_id
+        )
+        .order_by(
+            Chunk.chunk_index
+        )
+        .all()
+    )
+
+    return chunks
+
+
+# =========================================================
+# BUILD QUIZ CONTEXT
+# =========================================================
+
+def build_quiz_context(
+    chunks: list[Chunk],
+) -> str:
+    """
+    Build the document context that will be
+    sent to Claude.
+
+    Each chunk contains its page number so
+    Claude can identify the source page.
+    """
+
+    sections = []
+
+    for number, chunk in enumerate(
+        chunks,
+        start=1,
+    ):
+
+        section = (
+            f"SOURCE {number}\n"
+            f"PAGE: {chunk.page_number}\n\n"
+            f"{chunk.content}"
+        )
+
+        sections.append(
+            section
+        )
+
+    return "\n\n---\n\n".join(
+        sections
+    )
+
+
+# =========================================================
+# GENERATE QUIZ WITH CLAUDE
+# =========================================================
+
+def generate_quiz_with_claude(
+    context: str,
+    question_count: int = DEFAULT_QUESTION_COUNT,
+) -> list[dict]:
+    """
+    Ask Claude to generate quiz questions
+    using ONLY the supplied document context.
+
+    Returns a list of dictionaries.
+    """
+
+    client = get_anthropic_client()
+
+    model = get_claude_model()
+
+    # -----------------------------------------------------
+    # System prompt
+    # -----------------------------------------------------
+
+    system_prompt = """
+You are StudyMate, an AI quiz generator
+for university students.
+
+Your task is to generate quiz questions
+using ONLY the provided document context.
+
+Do NOT use outside knowledge.
+
+Generate a mixture of:
+
+- multiple choice questions
+- true/false questions
+- short answer questions
+
+Every question must contain:
+
+{
+    "question_text": "...",
+    "question_type": "multiple_choice | true_false | short_answer",
+    "options": {...},
+    "correct_answer": "...",
+    "explanation": "...",
+    "source_page": 1
+}
+
+Rules:
+
+1. Use ONLY information found in the document.
+2. Do not invent information.
+3. Every question must have a correct answer.
+4. Multiple choice questions must have exactly 4 options.
+5. True/false questions must have:
+   {
+       "true": "True",
+       "false": "False"
+   }
+6. Short answer questions must have:
+   "options": null
+7. source_page must be the page where the
+   information used for the question appears.
+8. Return ONLY valid JSON.
+9. Do not return Markdown.
+10. Do not wrap the JSON in ```json.
+11. The JSON must be an array.
+12. Make questions clear and educational.
+13. Avoid creating multiple questions that
+    test exactly the same information.
+""".strip()
+
+    # -----------------------------------------------------
+    # User prompt
+    # -----------------------------------------------------
+
+    user_prompt = f"""
+DOCUMENT CONTEXT:
+
+{context}
+
+TASK:
+
+Generate exactly {question_count}
+quiz questions from the document.
+
+Return ONLY a valid JSON array.
+
+Each item must follow this structure:
+
+{{
+    "question_text": "...",
+    "question_type": "multiple_choice",
+    "options": {{
+        "A": "...",
+        "B": "...",
+        "C": "...",
+        "D": "..."
+    }},
+    "correct_answer": "A",
+    "explanation": "...",
+    "source_page": 1
+}}
+
+For true/false:
+
+{{
+    "question_text": "...",
+    "question_type": "true_false",
+    "options": {{
+        "true": "True",
+        "false": "False"
+    }},
+    "correct_answer": "true",
+    "explanation": "...",
+    "source_page": 1
+}}
+
+For short answer:
+
+{{
+    "question_text": "...",
+    "question_type": "short_answer",
+    "options": null,
+    "correct_answer": "...",
+    "explanation": "...",
+    "source_page": 1
+}}
+""".strip()
+
+    # -----------------------------------------------------
+    # Call Claude
+    # -----------------------------------------------------
+
+    try:
+
+        response = client.messages.create(
+            model=model,
+            max_tokens=5000,
+            temperature=0.2,
+            system=system_prompt,
+            messages=[
+                {
+                    "role": "user",
+                    "content": user_prompt,
+                }
+            ],
+        )
+
+    except RateLimitError as error:
+
+        raise RuntimeError(
+            "The AI service rate limit was reached. "
+            "Please try again later."
+        ) from error
+
+    except APITimeoutError as error:
+
+        raise RuntimeError(
+            "The AI service took too long to respond."
+        ) from error
+
+    except APIConnectionError as error:
+
+        raise RuntimeError(
+            "Could not connect to the AI service."
+        ) from error
+
+    except APIStatusError as error:
+
+        raise RuntimeError(
+            f"The AI service returned an error: {error}"
+        ) from error
+
+    # -----------------------------------------------------
+    # Extract text from Claude response
+    # -----------------------------------------------------
+
+    text_parts = [
+        block.text
+        for block in response.content
+        if block.type == "text"
+    ]
+
+    response_text = "\n".join(
+        text_parts
+    ).strip()
+
+    if not response_text:
+
+        raise RuntimeError(
+            "Claude returned an empty quiz."
+        )
+
+    # -----------------------------------------------------
+    # Remove accidental Markdown fences
+    # -----------------------------------------------------
+
+    if response_text.startswith(
+        "```"
+    ):
+
+        response_text = re.sub(
+            r"^```(?:json)?\s*",
+            "",
+            response_text,
+        )
+
+        response_text = re.sub(
+            r"\s*```$",
+            "",
+            response_text,
+        )
+
+        response_text = response_text.strip()
+
+    # -----------------------------------------------------
+    # Parse JSON
+    # -----------------------------------------------------
+
+    try:
+
+        questions = json.loads(
+            response_text
+        )
+
+    except json.JSONDecodeError as error:
+
+        raise RuntimeError(
+            "Claude returned invalid JSON "
+            "while generating the quiz."
+        ) from error
+
+    # -----------------------------------------------------
+    # Validate response type
+    # -----------------------------------------------------
+
+    if not isinstance(
+        questions,
+        list,
+    ):
+
+        raise RuntimeError(
+            "Claude quiz response must be "
+            "a JSON array."
+        )
+
+    return questions
+
+
+# =========================================================
+# SAVE QUIZ QUESTIONS
+# =========================================================
+
+def save_quiz_questions(
+    db: Session,
+    quiz: Quiz,
+    questions: list[dict],
+) -> list[QuizQuestion]:
+    """
+    Validate and save generated questions
+    into the quiz_questions table.
+    """
+
+    saved_questions = []
+
+    for question_data in questions:
+
+        # -------------------------------------------------
+        # Read fields
+        # -------------------------------------------------
+
+        question_text = question_data.get(
+            "question_text"
+        )
+
+        question_type = question_data.get(
+            "question_type"
+        )
+
+        options = question_data.get(
+            "options"
+        )
+
+        correct_answer = question_data.get(
+            "correct_answer"
+        )
+
+        explanation = question_data.get(
+            "explanation"
+        )
+
+        source_page = question_data.get(
+            "source_page"
+        )
+
+        # -------------------------------------------------
+        # Validate common fields
+        # -------------------------------------------------
+
+        if not question_text:
+            continue
+
+        if not question_type:
+            continue
+
+        if correct_answer is None:
+            continue
+
+        # -------------------------------------------------
+        # Validate question type
+        # -------------------------------------------------
+
+        if question_type == "multiple_choice":
+
+            if not isinstance(
+                options,
+                dict,
+            ):
+                continue
+
+            if len(options) != 4:
+                continue
+
+            if str(
+                correct_answer
+            ) not in options:
+
+                continue
+
+        elif question_type == "true_false":
+
+            options = {
+                "true": "True",
+                "false": "False",
+            }
+
+            normalized_answer = str(
+                correct_answer
+            ).lower().strip()
+
+            if normalized_answer not in {
+                "true",
+                "false",
+            }:
+
+                continue
+
+            correct_answer = (
+                normalized_answer
+            )
+
+        elif question_type == "short_answer":
+
+            options = None
+
+        else:
+
+            continue
+
+        # -------------------------------------------------
+        # Validate source page
+        # -------------------------------------------------
+
+        if source_page is not None:
+
+            try:
+
+                source_page = int(
+                    source_page
+                )
+
+            except (
+                TypeError,
+                ValueError,
+            ):
+
+                source_page = None
+
+        # -------------------------------------------------
+        # Create QuizQuestion
+        # -------------------------------------------------
+
+        quiz_question = QuizQuestion(
+            quiz_id=quiz.id,
+            question_text=str(
+                question_text
+            ),
+            question_type=question_type,
+            options=options,
+            correct_answer=str(
+                correct_answer
+            ),
+            explanation=(
+                str(explanation)
+                if explanation
+                else None
+            ),
+            source_page=source_page,
+        )
+
+        db.add(
+            quiz_question
+        )
+
+        saved_questions.append(
+            quiz_question
+        )
+
+    # -----------------------------------------------------
+    # Make sure at least one question exists
+    # -----------------------------------------------------
+
+    if not saved_questions:
+
+        raise RuntimeError(
+            "No valid quiz questions were generated."
+        )
+
+    db.commit()
+
+    for question in saved_questions:
+
+        db.refresh(question)
+
+    return saved_questions
+
+
+# =========================================================
+# COMPLETE QUIZ GENERATION PIPELINE
+# =========================================================
+
+def generate_quiz(
+    db: Session,
+    quiz: Quiz,
+    question_count: int = DEFAULT_QUESTION_COUNT,
+) -> list[QuizQuestion]:
+    """
+    Complete AI quiz generation pipeline.
+
+    Flow:
+
+        Quiz
+          ↓
+        Document
+          ↓
+        Chunks
+          ↓
+        Build context
+          ↓
+        Claude
+          ↓
+        JSON questions
+          ↓
+        Validate
+          ↓
+        quiz_questions table
+    """
+
+    # -----------------------------------------------------
+    # Check document status
+    # -----------------------------------------------------
+
+    document = (
+        db.query(Document)
+        .filter(
+            Document.id
+            == quiz.document_id
+        )
+        .first()
+    )
+
+    if not document:
+
+        raise ValueError(
+            "Document not found."
+        )
+
+    if document.status != "ready":
+
+        raise ValueError(
+            f"Document is not ready. "
+            f"Current status: {document.status}"
+        )
+
+    # -----------------------------------------------------
+    # Get chunks
+    # -----------------------------------------------------
+
+    chunks = get_document_chunks(
+        db=db,
+        document_id=quiz.document_id,
+    )
+
+    if not chunks:
+
+        raise ValueError(
+            "No chunks found for this document."
+        )
+
+    # -----------------------------------------------------
+    # Build context
+    # -----------------------------------------------------
+
+    context = build_quiz_context(
+        chunks
+    )
+
+    # -----------------------------------------------------
+    # Generate questions with Claude
+    # -----------------------------------------------------
+
+    questions = generate_quiz_with_claude(
+        context=context,
+        question_count=question_count,
+    )
+
+    # -----------------------------------------------------
+    # Save questions
+    # -----------------------------------------------------
+
+    saved_questions = save_quiz_questions(
+        db=db,
+        quiz=quiz,
+        questions=questions,
+    )
+
+    return saved_questions
