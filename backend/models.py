@@ -7,6 +7,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Index,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -165,6 +166,17 @@ class Document(Base):
 
 class Chunk(Base):
     __tablename__ = "chunks"
+
+    __table_args__ = (
+        Index(
+            "ix_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={
+                "embedding": "vector_cosine_ops",
+            },
+        ),
+    )
 
     id = Column(
         UUID(as_uuid=True),
@@ -415,6 +427,11 @@ class QuizQuestion(Base):
         ),
         nullable=False,
         index=True,
+    )
+
+    question_index = Column(
+        Integer,
+        nullable=False,
     )
 
     question_text = Column(

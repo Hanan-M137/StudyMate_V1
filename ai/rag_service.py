@@ -1,9 +1,7 @@
-import os
 from dataclasses import dataclass
 from uuid import UUID
 
 from anthropic import (
-    Anthropic,
     APIConnectionError,
     APIStatusError,
     APITimeoutError,
@@ -12,8 +10,10 @@ from anthropic import (
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
-from .embedding_service import generate_embedding
 from backend.models import Chunk, Document
+
+from .anthropic_client import get_anthropic_client
+from .embedding_service import generate_embedding
 
 
 # =========================================================
@@ -28,7 +28,7 @@ load_dotenv()
 # =========================================================
 
 TOP_K = 5
-MINIMUM_SIMILARITY = 0.20
+MINIMUM_SIMILARITY = 0.30
 
 
 # =========================================================
@@ -43,12 +43,22 @@ context provided to you.
 
 Rules:
 1. Do not use outside knowledge.
-2. Do not invent facts that are not present in the context.
-3. If the answer is not supported by the context, say:
+2. Do not invent facts that are not present in the document context.
+3. If the answer is not supported by the document context, say:
    "I could not find this information in your document."
 4. Cite supporting pages using the format [Page X].
 5. Give a clear, direct, and student-friendly answer.
 6. If multiple chunks repeat the same information, do not repeat it.
+7. You may use the conversation history to understand what the
+   student is referring to, especially for follow-up questions.
+8. Conversation history provides context only. The actual answer
+   must still be based on the provided document context.
+9. If the student asks something like "explain that more simply",
+   "what does that mean?", or "give me an example", use the
+   previous conversation to determine what "that" refers to.
+10. Do not treat information from the conversation history as
+    document evidence unless the same information is supported
+    by the current document context.
 """.strip()
 
 
@@ -62,26 +72,6 @@ class RetrievedChunk:
     content: str
     page_number: int
     similarity: float
-
-
-# =========================================================
-# ANTHROPIC CLIENT
-# =========================================================
-
-def get_anthropic_client() -> Anthropic:
-    """
-    Create an Anthropic client using the API key
-    stored in the .env file.
-    """
-
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-
-    if not api_key:
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY is missing from the .env file"
-        )
-
-    return Anthropic(api_key=api_key)
 
 
 # =========================================================
@@ -127,7 +117,8 @@ def retrieve_relevant_chunks(
     results = (
         db.query(Chunk, distance)
         .filter(
-            Chunk.document_id == document_id
+            Chunk.document_id == document_id,
+            Chunk.embedding.isnot(None)
         )
         .order_by(distance)
         .limit(top_k)
@@ -198,10 +189,29 @@ def build_context(
 def generate_answer_with_claude(
     question: str,
     chunks: list[RetrievedChunk],
+    conversation_history: list[dict] | None = None,
 ) -> str:
     """
     Ask Claude to answer the student's question
-    using only the retrieved document context.
+    using the retrieved document context and
+    previous conversation history.
+
+    conversation_history contains previous messages
+    in Anthropic's message format:
+
+    [
+        {
+            "role": "user",
+            "content": "Previous question"
+        },
+        {
+            "role": "assistant",
+            "content": "Previous answer"
+        }
+    ]
+
+    The current question is added separately as the
+    newest user message.
     """
 
     if not chunks:
@@ -211,13 +221,22 @@ def generate_answer_with_claude(
         )
 
     # -----------------------------------------------------
+    # Normalize conversation history
+    # -----------------------------------------------------
+
+    if conversation_history is None:
+        conversation_history = []
+
+    # -----------------------------------------------------
     # Build document context
     # -----------------------------------------------------
 
-    context = build_context(chunks)
+    context = build_context(
+        chunks
+    )
 
     # -----------------------------------------------------
-    # Build user prompt
+    # Build current user prompt
     # -----------------------------------------------------
 
     user_prompt = f"""
@@ -225,11 +244,19 @@ DOCUMENT CONTEXT:
 
 {context}
 
-STUDENT QUESTION:
+CURRENT STUDENT QUESTION:
 
 {question}
 
-Answer the question using only the document context.
+Answer the current question using only the document context.
+
+Use the conversation history only to understand references
+and follow-up questions.
+
+If the question refers to something from the previous
+conversation, identify what the student means and answer
+based on the document context.
+
 Include page citations such as [Page 3].
 """.strip()
 
@@ -243,6 +270,8 @@ Include page citations such as [Page 3].
     # Get Claude model from .env
     # -----------------------------------------------------
 
+    import os
+
     claude_model = os.getenv(
         "CLAUDE_MODEL"
     )
@@ -253,40 +282,92 @@ Include page citations such as [Page 3].
         )
 
     # -----------------------------------------------------
+    # Build Claude messages
+    # -----------------------------------------------------
+    #
+    # Previous conversation messages are added first.
+    #
+    # Then the current question is added last.
+    #
+    # Example:
+    #
+    # User:
+    # What is supply and demand?
+    #
+    # Assistant:
+    # Supply and demand describe...
+    #
+    # User:
+    # Explain that more simply.
+    #
+    # Claude can now understand what "that" means.
+    # -----------------------------------------------------
+
+    messages = []
+
+    for message in conversation_history:
+
+        role = message.get("role")
+        content = message.get("content")
+
+        if role not in {"user", "assistant"}:
+            continue
+
+        if not content:
+            continue
+
+        messages.append(
+            {
+                "role": role,
+                "content": str(content),
+            }
+        )
+
+    # -----------------------------------------------------
+    # Add current question
+    # -----------------------------------------------------
+
+    messages.append(
+        {
+            "role": "user",
+            "content": user_prompt,
+        }
+    )
+
+    # -----------------------------------------------------
     # Call Claude
     # -----------------------------------------------------
 
     try:
+
         response = client.messages.create(
             model=claude_model,
             max_tokens=1000,
-            temperature=0,
             system=SYSTEM_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": user_prompt,
-                }
-            ],
+            messages=messages,
         )
 
     except RateLimitError as error:
+
         raise RuntimeError(
             "The AI service rate limit was reached. "
             "Please try again later."
         ) from error
 
     except APITimeoutError as error:
+
         raise RuntimeError(
             "The AI service took too long to respond."
         ) from error
 
     except APIConnectionError as error:
+
         raise RuntimeError(
             "Could not connect to the AI service."
         ) from error
-    
+
     except APIStatusError as error:
+
         raise RuntimeError(
             f"The AI service returned an error: {error}"
         ) from error
@@ -321,6 +402,7 @@ def answer_question(
     db: Session,
     document_id: UUID,
     question: str,
+    conversation_history: list[dict] | None = None,
 ) -> dict:
     """
     Complete RAG pipeline:
@@ -330,8 +412,15 @@ def answer_question(
     3. Retrieve relevant chunks
     4. Calculate similarity
     5. Filter irrelevant chunks
-    6. Send relevant context to Claude
-    7. Return answer and sources
+    6. Load conversation history
+    7. Send conversation history + document context
+       + current question to Claude
+    8. Return answer and sources
+
+    conversation_history:
+        Previous messages from the current conversation.
+        It is used to give Claude conversational memory,
+        especially for follow-up questions.
     """
 
     # -----------------------------------------------------
@@ -356,9 +445,20 @@ def answer_question(
     # -----------------------------------------------------
 
     if document.status != "ready":
+
         raise ValueError(
             f"Document is not ready. "
             f"Current status: {document.status}"
+        )
+
+    # -----------------------------------------------------
+    # Validate question
+    # -----------------------------------------------------
+
+    if not question or not question.strip():
+
+        raise ValueError(
+            "Question cannot be empty"
         )
 
     # -----------------------------------------------------
@@ -387,6 +487,7 @@ def answer_question(
     # -----------------------------------------------------
 
     if not relevant_chunks:
+
         return {
             "answer": (
                 "I could not find this information "
@@ -402,6 +503,7 @@ def answer_question(
     answer = generate_answer_with_claude(
         question=question,
         chunks=relevant_chunks,
+        conversation_history=conversation_history,
     )
 
     # -----------------------------------------------------

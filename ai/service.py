@@ -1,27 +1,31 @@
 import json
+import logging
 import os
 import re
 from pathlib import Path
 from uuid import UUID
 
 from anthropic import (
-    Anthropic,
     APIConnectionError,
     APIStatusError,
     APITimeoutError,
     RateLimitError,
 )
+
 from dotenv import load_dotenv
 from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from backend.database import SessionLocal
+
 from backend.models import (
     Chunk,
     Document,
     Quiz,
     QuizQuestion,
 )
+
+from .anthropic_client import get_anthropic_client
 from .embedding_service import generate_embeddings
 
 
@@ -30,6 +34,13 @@ from .embedding_service import generate_embeddings
 # =========================================================
 
 load_dotenv()
+
+
+# =========================================================
+# LOGGING
+# =========================================================
+
+logger = logging.getLogger(__name__)
 
 
 # =========================================================
@@ -45,6 +56,10 @@ CHUNK_OVERLAP = 100
 # =========================================================
 
 DEFAULT_QUESTION_COUNT = 10
+
+# Maximum number of document chunks that can be
+# sent to Claude during quiz generation.
+MAX_QUIZ_CHUNKS = 100
 
 
 # =========================================================
@@ -327,6 +342,12 @@ def process_document(
                 "No readable text was found in the PDF"
             )
 
+        logger.info(
+            "Document %s: extracted %d chunks.",
+            document.id,
+            len(extracted_chunks),
+        )
+
         # -------------------------------------------------
         # Generate embeddings
         # -------------------------------------------------
@@ -339,6 +360,12 @@ def process_document(
         embeddings = generate_embeddings(
             chunk_texts
         )
+
+        if len(embeddings) != len(extracted_chunks):
+            raise RuntimeError(
+                "The number of generated embeddings "
+                "does not match the number of chunks."
+            )
 
         # -------------------------------------------------
         # Delete old chunks if document is
@@ -368,12 +395,8 @@ def process_document(
             chunk = Chunk(
                 document_id=document.id,
                 content=item["content"],
-                page_number=item[
-                    "page_number"
-                ],
-                chunk_index=item[
-                    "chunk_index"
-                ],
+                page_number=item["page_number"],
+                chunk_index=item["chunk_index"],
                 embedding=embedding,
             )
 
@@ -381,7 +404,7 @@ def process_document(
 
         # -------------------------------------------------
         # Update document information
-        # -------------------------------------------------
+        # -----------------------------------------------------
 
         reader = PdfReader(
             document.file_path
@@ -400,6 +423,13 @@ def process_document(
         db.commit()
 
         db.refresh(document)
+
+        logger.info(
+            "Document %s processed successfully. "
+            "Stored %d chunks.",
+            document.id,
+            len(extracted_chunks),
+        )
 
         return len(extracted_chunks)
 
@@ -425,6 +455,11 @@ def process_document(
             document.status = "failed"
 
             db.commit()
+
+        logger.exception(
+            "Failed to process document %s.",
+            document.id,
+        )
 
         raise
 
@@ -462,6 +497,13 @@ def process_document_background(
         )
 
         if not document:
+
+            logger.warning(
+                "Background processing: "
+                "document %s was not found.",
+                document_id,
+            )
+
             return
 
         # -------------------------------------------------
@@ -483,38 +525,15 @@ def process_document_background(
 
 
 # =========================================================
-# ANTHROPIC CLIENT
-# =========================================================
-
-def get_anthropic_client() -> Anthropic:
-    """
-    Create Anthropic client using the API key
-    stored in the .env file.
-    """
-
-    api_key = os.getenv(
-        "ANTHROPIC_API_KEY"
-    )
-
-    if not api_key:
-
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY is missing "
-            "from the .env file"
-        )
-
-    return Anthropic(
-        api_key=api_key
-    )
-
-
-# =========================================================
 # GET CLAUDE MODEL
 # =========================================================
 
 def get_claude_model() -> str:
     """
     Get Claude model ID from .env.
+
+    This is the single place responsible for
+    retrieving the Claude model configuration.
     """
 
     model = os.getenv(
@@ -559,6 +578,94 @@ def get_document_chunks(
     )
 
     return chunks
+
+
+# =========================================================
+# SELECT QUIZ CHUNKS
+# =========================================================
+
+def select_quiz_chunks(
+    chunks: list[Chunk],
+    max_chunks: int = MAX_QUIZ_CHUNKS,
+) -> list[Chunk]:
+    """
+    Select a limited number of chunks for quiz generation.
+
+    If the document contains fewer chunks than the limit,
+    all chunks are returned.
+
+    If the document contains more chunks than the limit,
+    chunks are selected approximately evenly across the
+    entire document.
+
+    This prevents very large documents from sending every
+    chunk to Claude while still giving the model content
+    from the beginning, middle, and end of the document.
+    """
+
+    if max_chunks < 1:
+        raise ValueError(
+            "max_chunks must be at least 1."
+        )
+
+    total_chunks = len(chunks)
+
+    logger.debug(
+        "Quiz chunk selection: total_chunks=%d, "
+        "max_chunks=%d",
+        total_chunks,
+        max_chunks,
+    )
+
+    if total_chunks <= max_chunks:
+
+        logger.info(
+            "Quiz generation: using all %d document chunks. "
+            "No chunks were dropped.",
+            total_chunks,
+        )
+
+        return chunks
+
+    # -----------------------------------------------------
+    # Calculate evenly distributed indexes
+    # -----------------------------------------------------
+
+    if max_chunks == 1:
+
+        selected_indexes = [0]
+
+    else:
+
+        selected_indexes = [
+            round(
+                i
+                * (total_chunks - 1)
+                / (max_chunks - 1)
+            )
+            for i in range(max_chunks)
+        ]
+
+    selected_chunks = [
+        chunks[index]
+        for index in selected_indexes
+    ]
+
+    dropped_chunks = (
+        total_chunks
+        - len(selected_chunks)
+    )
+
+    logger.info(
+        "Quiz generation: document contains %d chunks. "
+        "Using %d chunks distributed across the document "
+        "and dropping %d chunks.",
+        total_chunks,
+        len(selected_chunks),
+        dropped_chunks,
+    )
+
+    return selected_chunks
 
 
 # =========================================================
@@ -610,8 +717,18 @@ def generate_quiz_with_claude(
     Ask Claude to generate quiz questions
     using ONLY the supplied document context.
 
+    The generated quiz supports:
+
+    - multiple_choice
+    - true_false
+    - short_answer
+
     Returns a list of dictionaries.
     """
+
+    # -----------------------------------------------------
+    # Get shared Anthropic client
+    # -----------------------------------------------------
 
     client = get_anthropic_client()
 
@@ -733,12 +850,17 @@ For short answer:
     # Call Claude
     # -----------------------------------------------------
 
+    logger.info(
+        "Generating %d quiz questions using Claude model '%s'.",
+        question_count,
+        model,
+    )
+
     try:
 
         response = client.messages.create(
             model=model,
             max_tokens=5000,
-            temperature=0.2,
             system=system_prompt,
             messages=[
                 {
@@ -750,6 +872,10 @@ For short answer:
 
     except RateLimitError as error:
 
+        logger.warning(
+            "Anthropic rate limit reached."
+        )
+
         raise RuntimeError(
             "The AI service rate limit was reached. "
             "Please try again later."
@@ -757,17 +883,30 @@ For short answer:
 
     except APITimeoutError as error:
 
+        logger.error(
+            "Anthropic request timed out."
+        )
+
         raise RuntimeError(
             "The AI service took too long to respond."
         ) from error
 
     except APIConnectionError as error:
 
+        logger.error(
+            "Could not connect to Anthropic."
+        )
+
         raise RuntimeError(
             "Could not connect to the AI service."
         ) from error
 
     except APIStatusError as error:
+
+        logger.error(
+            "Anthropic API returned an error: %s",
+            error,
+        )
 
         raise RuntimeError(
             f"The AI service returned an error: {error}"
@@ -827,6 +966,10 @@ For short answer:
 
     except json.JSONDecodeError as error:
 
+        logger.error(
+            "Claude returned invalid JSON."
+        )
+
         raise RuntimeError(
             "Claude returned invalid JSON "
             "while generating the quiz."
@@ -845,6 +988,11 @@ For short answer:
             "Claude quiz response must be "
             "a JSON array."
         )
+
+    logger.info(
+        "Claude generated %d quiz questions.",
+        len(questions),
+    )
 
     return questions
 
@@ -866,6 +1014,12 @@ def save_quiz_questions(
     saved_questions = []
 
     for question_data in questions:
+
+        if not isinstance(
+            question_data,
+            dict,
+        ):
+            continue
 
         # -------------------------------------------------
         # Read fields
@@ -908,6 +1062,17 @@ def save_quiz_questions(
         if correct_answer is None:
             continue
 
+        question_text = str(
+            question_text
+        ).strip()
+
+        question_type = str(
+            question_type
+        ).strip().lower()
+
+        if not question_text:
+            continue
+
         # -------------------------------------------------
         # Validate question type
         # -------------------------------------------------
@@ -923,11 +1088,51 @@ def save_quiz_questions(
             if len(options) != 4:
                 continue
 
-            if str(
-                correct_answer
-            ) not in options:
+            required_options = {
+                "A",
+                "B",
+                "C",
+                "D",
+            }
 
+            if set(options.keys()) != required_options:
                 continue
+
+            normalized_options = {}
+
+            for option_key in (
+                "A",
+                "B",
+                "C",
+                "D",
+            ):
+
+                option_value = options.get(
+                    option_key
+                )
+
+                if option_value is None:
+                    break
+
+                normalized_options[
+                    option_key
+                ] = str(
+                    option_value
+                ).strip()
+
+            else:
+
+                normalized_answer = str(
+                    correct_answer
+                ).upper().strip()
+
+                if normalized_answer in required_options:
+
+                    options = normalized_options
+                    correct_answer = normalized_answer
+
+                else:
+                    continue
 
         elif question_type == "true_false":
 
@@ -947,13 +1152,18 @@ def save_quiz_questions(
 
                 continue
 
-            correct_answer = (
-                normalized_answer
-            )
+            correct_answer = normalized_answer
 
         elif question_type == "short_answer":
 
             options = None
+
+            correct_answer = str(
+                correct_answer
+            ).strip()
+
+            if not correct_answer:
+                continue
 
         else:
 
@@ -971,6 +1181,9 @@ def save_quiz_questions(
                     source_page
                 )
 
+                if source_page < 1:
+                    source_page = None
+
             except (
                 TypeError,
                 ValueError,
@@ -979,21 +1192,28 @@ def save_quiz_questions(
                 source_page = None
 
         # -------------------------------------------------
+        # Determine question index
+        # -------------------------------------------------
+
+        question_index = len(
+            saved_questions
+        )
+
+        # -------------------------------------------------
         # Create QuizQuestion
         # -------------------------------------------------
 
         quiz_question = QuizQuestion(
             quiz_id=quiz.id,
-            question_text=str(
-                question_text
-            ),
+            question_index=question_index,
+            question_text=question_text,
             question_type=question_type,
             options=options,
             correct_answer=str(
                 correct_answer
             ),
             explanation=(
-                str(explanation)
+                str(explanation).strip()
                 if explanation
                 else None
             ),
@@ -1018,7 +1238,39 @@ def save_quiz_questions(
             "No valid quiz questions were generated."
         )
 
-    db.commit()
+    # -----------------------------------------------------
+    # Make sure we do not silently return
+    # far fewer questions than requested
+    # -----------------------------------------------------
+
+    logger.info(
+        "Validated %d quiz questions.",
+        len(saved_questions),
+    )
+
+    # -----------------------------------------------------
+    # Commit
+    # -----------------------------------------------------
+
+    try:
+
+        db.commit()
+
+    except Exception:
+
+        db.rollback()
+
+        logger.exception(
+            "Failed to save quiz questions "
+            "for quiz %s.",
+            quiz.id,
+        )
+
+        raise
+
+    # -----------------------------------------------------
+    # Refresh questions
+    # -----------------------------------------------------
 
     for question in saved_questions:
 
@@ -1039,13 +1291,18 @@ def generate_quiz(
     """
     Complete AI quiz generation pipeline.
 
+    This is the single quiz-generation entry point
+    used by the FastAPI endpoint in main.py.
+
     Flow:
 
         Quiz
           ↓
         Document
           ↓
-        Chunks
+        All Chunks
+          ↓
+        Select limited/distributed Chunks
           ↓
         Build context
           ↓
@@ -1057,6 +1314,22 @@ def generate_quiz(
           ↓
         quiz_questions table
     """
+
+    # -----------------------------------------------------
+    # Validate question count
+    # -----------------------------------------------------
+
+    if question_count < 1:
+
+        raise ValueError(
+            "question_count must be at least 1."
+        )
+
+    if question_count > 50:
+
+        raise ValueError(
+            "question_count cannot exceed 50."
+        )
 
     # -----------------------------------------------------
     # Check document status
@@ -1085,18 +1358,40 @@ def generate_quiz(
         )
 
     # -----------------------------------------------------
-    # Get chunks
+    # Get all document chunks
     # -----------------------------------------------------
 
-    chunks = get_document_chunks(
+    all_chunks = get_document_chunks(
         db=db,
         document_id=quiz.document_id,
+    )
+
+    if not all_chunks:
+
+        raise ValueError(
+            "No chunks found for this document."
+        )
+
+    logger.info(
+        "Quiz %s: found %d chunks for document %s.",
+        quiz.id,
+        len(all_chunks),
+        quiz.document_id,
+    )
+
+    # -----------------------------------------------------
+    # Select limited quiz chunks
+    # -----------------------------------------------------
+
+    chunks = select_quiz_chunks(
+        chunks=all_chunks,
+        max_chunks=MAX_QUIZ_CHUNKS,
     )
 
     if not chunks:
 
         raise ValueError(
-            "No chunks found for this document."
+            "No chunks were selected for quiz generation."
         )
 
     # -----------------------------------------------------
@@ -1105,6 +1400,18 @@ def generate_quiz(
 
     context = build_quiz_context(
         chunks
+    )
+
+    if not context.strip():
+
+        raise ValueError(
+            "Quiz context is empty."
+        )
+
+    logger.debug(
+        "Quiz %s: built context from %d chunks.",
+        quiz.id,
+        len(chunks),
     )
 
     # -----------------------------------------------------
@@ -1124,6 +1431,12 @@ def generate_quiz(
         db=db,
         quiz=quiz,
         questions=questions,
+    )
+
+    logger.info(
+        "Quiz %s generated successfully with %d questions.",
+        quiz.id,
+        len(saved_questions),
     )
 
     return saved_questions
