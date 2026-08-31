@@ -471,6 +471,15 @@ def answer_question(
         question=question,
     )
 
+        # --- TEMPORARY DEBUG: remove after diagnosing ---
+    for c in chunks:
+        print(
+            f"[DEBUG] page={c.page_number} "
+            f"similarity={c.similarity:.4f} "
+            f"content={c.content[:100]!r}"
+        )
+    # -------------------------------------------------
+
     # -----------------------------------------------------
     # Filter by similarity
     # -----------------------------------------------------

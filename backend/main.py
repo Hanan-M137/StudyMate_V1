@@ -41,8 +41,13 @@ from .auth import (
     hash_password,
     verify_password,
     create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
     get_current_user,
 )
+
+#port number problem
+from fastapi.middleware.cors import CORSMiddleware
 
 
 # =========================================================
@@ -81,6 +86,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+##port number problem
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # =========================================================
 # CHAT SETTINGS
@@ -88,7 +103,7 @@ app = FastAPI(
 
 # Number of previous messages that will be sent to Claude
 # as conversation history.
-CHAT_HISTORY_LIMIT = 6
+CHAT_HISTORY_LIMIT = 200
 
 
 # =========================================================
@@ -104,7 +119,12 @@ class RegisterRequest(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 
 class DocumentResponse(BaseModel):
@@ -283,8 +303,62 @@ def login(
         }
     )
 
+    refresh_token = create_refresh_token(
+        data={
+            "sub": str(user.id)
+        }
+    )
+
     return {
         "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
+
+# =========================================================
+# AUTHENTICATION - REFRESH TOKEN
+# =========================================================
+
+@app.post(
+    "/auth/refresh",
+    response_model=TokenResponse,
+)
+def refresh_access_token(
+    request_data: RefreshRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Exchange a valid refresh token for a new access token
+    (and a new refresh token, rotated for extra safety).
+    """
+
+    user_id = decode_refresh_token(
+        request_data.refresh_token
+    )
+
+    user = (
+        db.query(User)
+        .filter(User.id == user_id)
+        .first()
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="User not found",
+        )
+
+    new_access_token = create_access_token(
+        data={"sub": str(user.id)}
+    )
+
+    new_refresh_token = create_refresh_token(
+        data={"sub": str(user.id)}
+    )
+
+    return {
+        "access_token": new_access_token,
+        "refresh_token": new_refresh_token,
         "token_type": "bearer",
     }
 

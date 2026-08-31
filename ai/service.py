@@ -13,7 +13,17 @@ from anthropic import (
 )
 
 from dotenv import load_dotenv
-from pypdf import PdfReader
+
+#from pypdf import PdfReader
+import io
+import fitz  # PyMuPDF
+import pytesseract
+from PIL import Image
+
+pytesseract.pytesseract.tesseract_cmd = (
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+)
+
 from sqlalchemy.orm import Session
 
 from backend.database import SessionLocal
@@ -228,6 +238,100 @@ def split_text_into_chunks(
 # =========================================================
 # EXTRACT PDF CHUNKS
 # =========================================================
+# =========================================================
+# EXTRACTION SETTINGS
+# =========================================================
+
+# If OCR finds meaningfully MORE text than normal extraction
+# for the same page, trust OCR instead. This adapts per page
+# instead of relying on one fixed character-count threshold.
+OCR_IMPROVEMENT_RATIO = 1.3
+
+OCR_RENDER_DPI = 200
+
+
+# =========================================================
+# EXTRACT TEXT IN VISUAL READING ORDER
+# =========================================================
+
+def extract_text_in_reading_order(page) -> str:
+    """
+    Extract text from a PDF page while respecting its
+    visual layout (top-to-bottom, then left-to-right),
+    instead of the PDF's raw internal content order.
+    """
+
+    blocks = page.get_text("blocks")
+
+    blocks.sort(
+        key=lambda block: (
+            round(block[1], 1),
+            round(block[0], 1),
+        )
+    )
+
+    text_parts = [
+        block[4]
+        for block in blocks
+        if block[4].strip()
+    ]
+
+    return "\n\n".join(text_parts)
+
+#ORC........................................
+# =========================================================
+# OCR EXTRACTION
+# =========================================================
+
+def extract_text_with_ocr(page) -> str:
+    """
+    Render the page as an image and run OCR on it.
+    """
+
+    pixmap = page.get_pixmap(dpi=OCR_RENDER_DPI)
+
+    image = Image.open(
+        io.BytesIO(pixmap.tobytes("png"))
+    )
+
+    return pytesseract.image_to_string(image)
+
+
+# =========================================================
+# EXTRACT BEST AVAILABLE TEXT FOR A PAGE
+# =========================================================
+
+def extract_page_text(page) -> str:
+    """
+    Extract the most complete text available for a page.
+
+    Runs both normal extraction and OCR, and keeps whichever
+    result is meaningfully more complete.
+    """
+
+    extracted_text = extract_text_in_reading_order(page)
+    ocr_text = extract_text_with_ocr(page)
+
+    extracted_length = len(extracted_text.strip())
+    ocr_length = len(ocr_text.strip())
+
+    if ocr_length > extracted_length * OCR_IMPROVEMENT_RATIO:
+
+        logger.info(
+            "Page: OCR found more content than normal "
+            "extraction (%d vs %d chars). Using OCR result.",
+            ocr_length,
+            extracted_length,
+        )
+
+        return ocr_text
+
+    return extracted_text
+#ORC........................................
+
+# =========================================================
+# EXTRACT PDF CHUNKS
+# =========================================================
 
 def extract_pdf_chunks(
     file_path: str,
@@ -235,11 +339,9 @@ def extract_pdf_chunks(
     """
     Extract and chunk a PDF page by page.
 
-    Each returned chunk contains:
-
-    - content
-    - page_number
-    - chunk_index
+    Uses PyMuPDF with visual reading order, and falls back
+    to OCR (per page) whenever it captures more content than
+    normal extraction.
     """
 
     path = Path(file_path)
@@ -249,27 +351,21 @@ def extract_pdf_chunks(
             f"PDF file was not found: {file_path}"
         )
 
-    reader = PdfReader(
-        str(path)
-    )
+    pdf_document = fitz.open(str(path))
 
     extracted_chunks = []
 
     chunk_index = 0
 
-    for page_number, page in enumerate(
-        reader.pages,
-        start=1,
-    ):
+    for page_index in range(len(pdf_document)):
 
-        raw_text = (
-            page.extract_text()
-            or ""
-        )
+        page = pdf_document[page_index]
 
-        cleaned_text = clean_text(
-            raw_text
-        )
+        page_number = page_index + 1
+
+        raw_text = extract_page_text(page)
+
+        cleaned_text = clean_text(raw_text)
 
         if not cleaned_text:
             continue
@@ -293,6 +389,8 @@ def extract_pdf_chunks(
             )
 
             chunk_index += 1
+
+    pdf_document.close()
 
     return extracted_chunks
 
@@ -406,14 +504,16 @@ def process_document(
         # Update document information
         # -----------------------------------------------------
 
-        reader = PdfReader(
+        pdf_document = fitz.open(
             document.file_path
         )
 
         document.page_count = len(
-            reader.pages
+            pdf_document
         )
 
+        pdf_document.close()
+        
         document.status = "ready"
 
         # -------------------------------------------------
