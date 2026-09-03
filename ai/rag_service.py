@@ -13,6 +13,9 @@ from sqlalchemy.orm import Session
 from backend.models import Chunk, Document
 
 from .anthropic_client import get_anthropic_client
+#............for layer 1
+from .input_gate import should_call_llm
+#............
 from .embedding_service import generate_embedding
 
 
@@ -44,8 +47,11 @@ context provided to you.
 Rules:
 1. Do not use outside knowledge.
 2. Do not invent facts that are not present in the document context.
-3. If the answer is not supported by the document context, say:
-   "I could not find this information in your document."
+3. If the answer is not supported by the document context, clearly
+   tell the student that this information could not be found in
+   their document. Do not use a fixed English sentence for this —
+   write it naturally in the same language as the student's
+   question, following Rule 11.
 4. Cite supporting pages using the format [Page X].
 5. Give a clear, direct, and student-friendly answer.
 6. If multiple chunks repeat the same information, do not repeat it.
@@ -59,8 +65,36 @@ Rules:
 10. Do not treat information from the conversation history as
     document evidence unless the same information is supported
     by the current document context.
+11. Always answer in the same language the student used to ask
+    their question. If the question is written in Arabic, the
+    entire answer — including any "not found" message — must be
+    written fully in Arabic. If the question is written in English,
+    the entire answer must be fully in English. Never mix two
+    languages within a single answer, and never default to English
+    when the question was asked in Arabic.
+12. Keep formatting simple and consistent across all answers.
+    Do NOT use markdown headers (like ## or ###), emojis, or heavy
+    bold formatting. Write in plain sentences and short paragraphs,
+    the way a teacher would explain something directly to a
+    student. You may use short bullet points ONLY when the
+    question explicitly asks for a list or a comparison of
+    multiple items (such as advantages vs. disadvantages) — and
+    even then, keep bullets plain text without bold headers or
+    emojis.
+13. Some documents were extracted from PDFs and may contain
+    mathematical notation, symbols, exponents, or formulas that
+    were not extracted cleanly, so they may look unclear,
+    inconsistent, or broken in the document context you receive.
+    If you notice this while answering, do not guess a single
+    "exact" reconstruction and present it as a direct quote. Do
+    not produce more than one candidate version of the same
+    formula or notation. Instead, say clearly, at the START of
+    your answer (not at the end), that the exact notation is
+    unclear in the source document, briefly describe what the
+    document context does make clear about the topic, and do not
+    cite a specific page number for a formula or symbol you are
+    not confident about.
 """.strip()
-
 
 # =========================================================
 # RETRIEVED CHUNK
@@ -462,6 +496,18 @@ def answer_question(
         )
 
     # -----------------------------------------------------
+    # Check for trivial small talk (input gate)
+    # -----------------------------------------------------
+
+    proceed, canned_reply = should_call_llm(question)
+
+    if not proceed:
+        return {
+            "answer": canned_reply,
+            "sources": [],
+        }
+
+    # -----------------------------------------------------
     # Retrieve relevant chunks
     # -----------------------------------------------------
 
@@ -471,25 +517,70 @@ def answer_question(
         question=question,
     )
 
-        # --- TEMPORARY DEBUG: remove after diagnosing ---
-    for c in chunks:
-        print(
-            f"[DEBUG] page={c.page_number} "
-            f"similarity={c.similarity:.4f} "
-            f"content={c.content[:100]!r}"
-        )
-    # -------------------------------------------------
-
-    # -----------------------------------------------------
-    # Filter by similarity
-    # -----------------------------------------------------
-
     relevant_chunks = [
         chunk
         for chunk in chunks
         if chunk.similarity
         >= MINIMUM_SIMILARITY
     ]
+
+    # -----------------------------------------------------
+    # Retry retrieval using recent conversation context
+    # -----------------------------------------------------
+    #
+    # A short follow-up question (e.g. "explain the first
+    # point in more detail") often has no meaningful content
+    # on its own, so the raw-question search above may find
+    # nothing. If we have conversation history, retry the
+    # search using the last user question and last assistant
+    # answer combined with the current question, so the
+    # search has enough context to find the right chunks.
+
+    if not relevant_chunks and conversation_history:
+
+        last_user_message = None
+        last_assistant_message = None
+
+        for message in reversed(conversation_history):
+            role = message.get("role")
+            content = message.get("content")
+
+            if not content:
+                continue
+
+            if role == "assistant" and last_assistant_message is None:
+                last_assistant_message = str(content)
+
+            if role == "user" and last_user_message is None:
+                last_user_message = str(content)
+
+            if last_user_message and last_assistant_message:
+                break
+
+        context_parts = [
+            text
+            for text in (last_user_message, last_assistant_message)
+            if text
+        ]
+
+        if context_parts:
+
+            combined_question = "\n".join(
+                context_parts + [question]
+            )
+
+            chunks = retrieve_relevant_chunks(
+                db=db,
+                document_id=document_id,
+                question=combined_question,
+            )
+
+            relevant_chunks = [
+                chunk
+                for chunk in chunks
+                if chunk.similarity
+                >= MINIMUM_SIMILARITY
+            ]
 
     # -----------------------------------------------------
     # No relevant information found

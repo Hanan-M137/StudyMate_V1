@@ -19,6 +19,7 @@ import io
 import fitz  # PyMuPDF
 import pytesseract
 from PIL import Image
+from spellchecker import SpellChecker
 
 pytesseract.pytesseract.tesseract_cmd = (
     r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -298,15 +299,58 @@ def extract_text_with_ocr(page) -> str:
 
 
 # =========================================================
+# WORD-LEVEL TEXT QUALITY CHECK
+# =========================================================
+#
+# Character-count comparison alone cannot detect a broken
+# font encoding: a garbled page can have roughly the same
+# number of characters as a correctly extracted one, just
+# with wrong letters. This measures how many of a text's
+# alphabetic words are recognizable English words, so two
+# extraction results for the same page can be compared
+# against each other directly, instead of judged against a
+# single fixed threshold.
+
+_spell_checker = SpellChecker()
+
+MIN_WORDS_FOR_QUALITY_CHECK = 20
+
+
+def unknown_word_ratio(text: str) -> float | None:
+    """
+    Return the fraction of alphabetic words in the given text
+    that are not recognizable English words, or None if there
+    are too few words to judge reliably.
+    """
+
+    words = re.findall(r"[A-Za-z]+", text)
+
+    if len(words) < MIN_WORDS_FOR_QUALITY_CHECK:
+        return None
+
+    lowercase_words = [word.lower() for word in words]
+
+    unknown_words = _spell_checker.unknown(lowercase_words)
+
+    return len(unknown_words) / len(lowercase_words)
+
+
+# =========================================================
 # EXTRACT BEST AVAILABLE TEXT FOR A PAGE
 # =========================================================
 
 def extract_page_text(page) -> str:
     """
-    Extract the most complete text available for a page.
+    Extract the most complete and reliable text available
+    for a page.
 
-    Runs both normal extraction and OCR, and keeps whichever
-    result is meaningfully more complete.
+    Runs both normal extraction and OCR. If OCR captured
+    meaningfully more content (for example, a scanned page),
+    it is used. Otherwise, whichever of the two results has
+    fewer unrecognizable words is used, since a broken font
+    encoding can corrupt specific words without reducing the
+    character count enough for the length-based check alone
+    to catch it.
     """
 
     extracted_text = extract_text_in_reading_order(page)
@@ -322,6 +366,25 @@ def extract_page_text(page) -> str:
             "extraction (%d vs %d chars). Using OCR result.",
             ocr_length,
             extracted_length,
+        )
+
+        return ocr_text
+
+    extracted_ratio = unknown_word_ratio(extracted_text)
+    ocr_ratio = unknown_word_ratio(ocr_text)
+
+    if (
+        extracted_ratio is not None
+        and ocr_ratio is not None
+        and ocr_ratio < extracted_ratio
+    ):
+
+        logger.info(
+            "Page: OCR text has fewer unrecognizable words "
+            "(%.3f vs %.3f) than normal extraction. "
+            "Using OCR result.",
+            ocr_ratio,
+            extracted_ratio,
         )
 
         return ocr_text
@@ -513,7 +576,7 @@ def process_document(
         )
 
         pdf_document.close()
-        
+
         document.status = "ready"
 
         # -------------------------------------------------
