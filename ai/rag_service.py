@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -8,6 +9,7 @@ from anthropic import (
     RateLimitError,
 )
 from dotenv import load_dotenv
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.models import Chunk, Document
@@ -17,6 +19,7 @@ from .anthropic_client import get_anthropic_client
 from .input_gate import should_call_llm
 #............
 from .embedding_service import generate_embedding
+from .reranker_service import rerank
 
 
 # =========================================================
@@ -32,6 +35,19 @@ load_dotenv()
 
 TOP_K = 5
 MINIMUM_SIMILARITY = 0.30
+
+# Reciprocal Rank Fusion constant used when combining the dense
+# (embedding) ranking with the lexical (trigram) ranking for Arabic
+# questions. A higher value makes the fused score less sensitive to
+# small differences between nearby ranks; 60 is the commonly used
+# default for RRF.
+RRF_K = 60
+
+# How many top RRF candidates to hand to the cross-encoder reranker
+# for Arabic questions. The reranker is much more expensive per
+# comparison than RRF, so it only ever looks at this shortlist,
+# never the whole document.
+RERANK_CANDIDATE_COUNT = 20
 
 
 # =========================================================
@@ -80,20 +96,30 @@ Rules:
     question explicitly asks for a list or a comparison of
     multiple items (such as advantages vs. disadvantages) — and
     even then, keep bullets plain text without bold headers or
-    emojis.
+    emojis. When the question involves several distinct numbered
+    parts or items (for example, multiple exercise numbers, or
+    several functions to analyze), give each part its own line
+    using the same numbering as the question, instead of merging
+    all the sub-answers into one continuous paragraph — even if
+    the question itself did not explicitly ask for "a list".
 13. Some documents were extracted from PDFs and may contain
     mathematical notation, symbols, exponents, or formulas that
     were not extracted cleanly, so they may look unclear,
     inconsistent, or broken in the document context you receive.
-    If you notice this while answering, do not guess a single
-    "exact" reconstruction and present it as a direct quote. Do
-    not produce more than one candidate version of the same
-    formula or notation. Instead, say clearly, at the START of
-    your answer (not at the end), that the exact notation is
-    unclear in the source document, briefly describe what the
-    document context does make clear about the topic, and do not
-    cite a specific page number for a formula or symbol you are
-    not confident about.
+    Never put quotation marks around a formula, equation, or
+    phrase and present it as copied directly from the document
+    unless it matches the document context character for
+    character. If a formula or symbol in the document context
+    looks unclear, inconsistent, or broken, your very first
+    sentence must say so plainly, before you write any version of
+    the formula. Do not open with a confident statement such as
+    "the document states..." or "the document clearly states..."
+    followed by a formula. After that first sentence, you may
+    describe, in words, what the document context does make clear
+    about the topic, but do not present more than one candidate
+    version of the unclear formula, and do not cite a specific
+    page number next to a formula or symbol you are not confident
+    about.
 """.strip()
 
 # =========================================================
@@ -109,9 +135,79 @@ class RetrievedChunk:
 
 
 # =========================================================
-# RETRIEVE RELEVANT CHUNKS
+# ARABIC QUESTION DETECTION
 # =========================================================
 
+ARABIC_CHARACTER_PATTERN = re.compile(r"[؀-ۿ]")
+LATIN_CHARACTER_PATTERN = re.compile(r"[A-Za-z]")
+
+
+def is_arabic_question(question: str) -> bool:
+    """
+    Decide whether the student's question is written mainly in
+    Arabic, based on a simple character-range count.
+
+    This is checked per-question, not per-document, so a document
+    in one language can still be asked about in another, and the
+    Arabic-specific retrieval improvements below only activate when
+    they are actually needed.
+    """
+    arabic_count = len(ARABIC_CHARACTER_PATTERN.findall(question))
+    latin_count = len(LATIN_CHARACTER_PATTERN.findall(question))
+    return arabic_count > latin_count
+
+
+# =========================================================
+# RECIPROCAL RANK FUSION
+# =========================================================
+
+def compute_rrf_scores(
+    chunk_ids,
+    dense_rank_by_chunk_id: dict,
+    similarity_rank_by_chunk_id: dict,
+    word_similarity_rank_by_chunk_id: dict,
+    rrf_k: int = RRF_K,
+) -> dict:
+    """
+    Combine up to three separate rankings (dense/embedding rank,
+    trigram similarity rank, trigram word_similarity rank) into one
+    Reciprocal Rank Fusion score per chunk id.
+
+    Each ranking dict maps chunk_id -> rank (1 = best). A chunk_id
+    missing from a given ranking simply does not contribute a term
+    for that ranking, so a chunk found by only one or two of the
+    three search methods can still be scored.
+
+    This is a pure function (no database or model calls), which
+    keeps the RRF math itself directly unit-testable.
+    """
+
+    combined_score_by_chunk_id = {}
+
+    for chunk_id in chunk_ids:
+
+        score = 0.0
+
+        dense_rank = dense_rank_by_chunk_id.get(chunk_id)
+        if dense_rank is not None:
+            score += 1.0 / (rrf_k + dense_rank)
+
+        similarity_rank = similarity_rank_by_chunk_id.get(chunk_id)
+        if similarity_rank is not None:
+            score += 1.0 / (rrf_k + similarity_rank)
+
+        word_similarity_rank = word_similarity_rank_by_chunk_id.get(chunk_id)
+        if word_similarity_rank is not None:
+            score += 1.0 / (rrf_k + word_similarity_rank)
+
+        combined_score_by_chunk_id[chunk_id] = score
+
+    return combined_score_by_chunk_id
+
+
+# =========================================================
+# RETRIEVE RELEVANT CHUNKS
+# =========================================================
 def retrieve_relevant_chunks(
     db: Session,
     document_id: UUID,
@@ -119,8 +215,23 @@ def retrieve_relevant_chunks(
     top_k: int = TOP_K,
 ) -> list[RetrievedChunk]:
     """
-    Retrieve the chunks most semantically similar
-    to the student's question.
+    Retrieve the chunks most relevant to the student's question.
+
+    For non-Arabic questions, this is a pure dense (embedding)
+    similarity search, exactly as before.
+
+    For Arabic questions, dense search alone under-performs because
+    the embedding model (all-MiniLM-L6-v2) was not trained
+    specifically for Arabic, and we are not changing that model.
+    To compensate, Arabic questions also run a lexical
+    (character-trigram) search against the chunk text using
+    PostgreSQL's pg_trgm extension, and the dense ranking and the
+    two trigram rankings are combined using Reciprocal Rank Fusion
+    (RRF). The top RERANK_CANDIDATE_COUNT chunks from that combined
+    ranking are then rescored by a multilingual cross-encoder
+    reranking model, which is more accurate than RRF but too slow
+    to run on the whole document, and the final top_k chunks are
+    picked from the reranked results.
     """
 
     if not question or not question.strip():
@@ -144,39 +255,146 @@ def retrieve_relevant_chunks(
         query_embedding
     ).label("distance")
 
-    # -----------------------------------------------------
-    # Retrieve closest chunks
-    # -----------------------------------------------------
-
-    results = (
+    dense_query = (
         db.query(Chunk, distance)
         .filter(
             Chunk.document_id == document_id,
             Chunk.embedding.isnot(None)
         )
         .order_by(distance)
-        .limit(top_k)
+    )
+
+    # -----------------------------------------------------
+    # Non-Arabic question: unchanged pure dense search
+    # -----------------------------------------------------
+
+    if not is_arabic_question(question):
+
+        results = dense_query.limit(top_k).all()
+
+        return [
+            RetrievedChunk(
+                id=chunk.id,
+                content=chunk.content,
+                page_number=chunk.page_number,
+                similarity=1.0 - float(cosine_distance),
+            )
+            for chunk, cosine_distance in results
+        ]
+
+    # -----------------------------------------------------
+    # Arabic question: hybrid dense + lexical (trigram)
+    # search, combined with Reciprocal Rank Fusion
+    # -----------------------------------------------------
+
+    dense_results = dense_query.all()
+
+    dense_similarity_by_chunk_id: dict = {}
+    dense_rank_by_chunk_id: dict = {}
+    chunk_by_id: dict = {}
+
+    for rank, (chunk, cosine_distance) in enumerate(dense_results, start=1):
+        dense_similarity_by_chunk_id[chunk.id] = 1.0 - float(cosine_distance)
+        dense_rank_by_chunk_id[chunk.id] = rank
+        chunk_by_id[chunk.id] = chunk
+
+    trigram_results = (
+        db.query(
+            Chunk,
+            func.similarity(Chunk.content, question).label(
+                "trigram_similarity"
+            ),
+            func.word_similarity(question, Chunk.content).label(
+                "trigram_word_similarity"
+            ),
+        )
+        .filter(Chunk.document_id == document_id)
         .all()
     )
 
+    for chunk, _similarity, _word_similarity in trigram_results:
+        chunk_by_id.setdefault(chunk.id, chunk)
+
+    similarity_ranking = sorted(
+        trigram_results,
+        key=lambda row: row[1],
+        reverse=True,
+    )
+    word_similarity_ranking = sorted(
+        trigram_results,
+        key=lambda row: row[2],
+        reverse=True,
+    )
+
+    similarity_rank_by_chunk_id = {
+        chunk.id: rank
+        for rank, (chunk, _similarity, _word_similarity)
+        in enumerate(similarity_ranking, start=1)
+    }
+    word_similarity_rank_by_chunk_id = {
+        chunk.id: rank
+        for rank, (chunk, _similarity, _word_similarity)
+        in enumerate(word_similarity_ranking, start=1)
+    }
+
+    # -----------------------------------------------------
+    # Combine all rankings with Reciprocal Rank Fusion
+    # -----------------------------------------------------
+
+    # -----------------------------------------------------
+    # Combine all rankings with Reciprocal Rank Fusion
+    # -----------------------------------------------------
+
+    combined_score_by_chunk_id = compute_rrf_scores(
+        chunk_by_id.keys(),
+        dense_rank_by_chunk_id,
+        similarity_rank_by_chunk_id,
+        word_similarity_rank_by_chunk_id,
+    )
+
+    candidate_chunk_ids = sorted(
+        combined_score_by_chunk_id,
+        key=lambda chunk_id: combined_score_by_chunk_id[chunk_id],
+        reverse=True,
+    )[:RERANK_CANDIDATE_COUNT]
+
+    # -----------------------------------------------------
+    # Rerank the shortlist with the cross-encoder model
+    # -----------------------------------------------------
+
+    candidate_chunks = [
+        chunk_by_id[chunk_id]
+        for chunk_id in candidate_chunk_ids
+    ]
+
+    rerank_scores = rerank(
+        question,
+        [chunk.content for chunk in candidate_chunks],
+    )
+
+    reranked_candidates = sorted(
+        zip(candidate_chunk_ids, candidate_chunks, rerank_scores),
+        key=lambda item: item[2],
+        reverse=True,
+    )[:top_k]
+
     retrieved_chunks = []
 
-    # -----------------------------------------------------
-    # Convert cosine distance to similarity
-    # -----------------------------------------------------
-
-    for chunk, cosine_distance in results:
-
-        similarity = (
-            1.0 - float(cosine_distance)
-        )
+    for chunk_id, chunk, _rerank_score in reranked_candidates:
 
         retrieved_chunks.append(
             RetrievedChunk(
                 id=chunk.id,
                 content=chunk.content,
                 page_number=chunk.page_number,
-                similarity=similarity,
+                # Reported similarity stays the dense/embedding
+                # similarity (0.0 if the chunk had no embedding),
+                # so the MINIMUM_SIMILARITY relevance filter further
+                # down the pipeline keeps working the same way it
+                # always has.
+                similarity=dense_similarity_by_chunk_id.get(
+                    chunk_id, 0.0
+                ),
             )
         )
 

@@ -89,6 +89,18 @@ def clean_text(text: str) -> str:
     if not text:
         return ""
 
+    # Remove Arabic tatweel (kashida) characters.
+    #
+    # This character is purely a visual justification mark used to
+    # stretch words when Arabic text is fully justified on a page.
+    # It carries no phonetic or semantic meaning on its own. Some
+    # PDF extraction results insert it as a literal character in
+    # the middle of words (for example "نَـتَــأمَّـل" instead of
+    # the correct "نَتَأَمَّل"), which breaks word-level matching
+    # for both semantic search and any text-based search. Removing
+    # it cannot corrupt a correct word, so this is always safe.
+    text = text.replace("ـ", "")
+
     # Replace Windows-style line endings
     text = text.replace("\r\n", "\n")
     text = text.replace("\r", "\n")
@@ -248,7 +260,7 @@ def split_text_into_chunks(
 # instead of relying on one fixed character-count threshold.
 OCR_IMPROVEMENT_RATIO = 1.3
 
-OCR_RENDER_DPI = 200
+OCR_RENDER_DPI = 300
 
 
 # =========================================================
@@ -281,12 +293,51 @@ def extract_text_in_reading_order(page) -> str:
 
 #ORC........................................
 # =========================================================
+# DETECT OCR LANGUAGE
+# =========================================================
+#
+# Tesseract needs to know which language model to use. Different
+# documents in StudyMate can be in different languages (Arabic or
+# English so far), so instead of hardcoding one language for every
+# page, we look at the text already extracted directly from the
+# page and pick the language with more matching characters. If the
+# page looks Arabic, we use the Arabic model; otherwise we fall
+# back to "eng", which is Tesseract's own default and matches the
+# behavior this project already had for English documents.
+
+ARABIC_CHARACTER_PATTERN = re.compile(r"[؀-ۿ]")
+LATIN_CHARACTER_PATTERN = re.compile(r"[A-Za-z]")
+
+
+def detect_ocr_language(text: str) -> str:
+    """
+    Decide which Tesseract language model to use for OCR on this
+    page, based on the script of the text already extracted
+    directly from it.
+    """
+
+    arabic_count = len(
+        ARABIC_CHARACTER_PATTERN.findall(text)
+    )
+
+    latin_count = len(
+        LATIN_CHARACTER_PATTERN.findall(text)
+    )
+
+    if arabic_count > latin_count:
+        return "ara"
+
+    return "eng"
+
+
+# =========================================================
 # OCR EXTRACTION
 # =========================================================
 
-def extract_text_with_ocr(page) -> str:
+def extract_text_with_ocr(page, lang: str = "eng") -> str:
     """
-    Render the page as an image and run OCR on it.
+    Render the page as an image and run OCR on it, using the
+    given Tesseract language model.
     """
 
     pixmap = page.get_pixmap(dpi=OCR_RENDER_DPI)
@@ -295,7 +346,7 @@ def extract_text_with_ocr(page) -> str:
         io.BytesIO(pixmap.tobytes("png"))
     )
 
-    return pytesseract.image_to_string(image)
+    return pytesseract.image_to_string(image, lang=lang)
 
 
 # =========================================================
@@ -336,6 +387,71 @@ def unknown_word_ratio(text: str) -> float | None:
 
 
 # =========================================================
+# LANGUAGE-AGNOSTIC TEXT QUALITY CHECK
+# =========================================================
+#
+# unknown_word_ratio() above can only judge English text, since it
+# relies on an English dictionary. For any other language (Arabic
+# so far), it always returns None, so extract_page_text() never
+# actually compares extraction quality for those pages and just
+# keeps whatever normal extraction produced, however corrupted.
+#
+# This check does not depend on any language or dictionary. It
+# measures the fraction of characters that fall outside the set
+# normally expected in Arabic or English text (letters, digits,
+# and common punctuation). A broken font encoding tends to turn
+# specific letters into characters from unrelated Unicode blocks
+# (stray Cyrillic- or Armenian-looking characters, for example),
+# which shows up here as a higher ratio, regardless of language.
+
+EXPECTED_CHARACTER_PATTERN = re.compile(
+    r"[؀-ۿ"
+    r"A-Za-z0-9"
+    r".,;:!?()\[\]{}\"'\-/\\@#%&*+=<>_~`|^$ ﻿]"
+)
+
+MIN_CHARACTERS_FOR_SUSPICIOUS_CHECK = 40
+
+# OCR itself is not perfectly accurate, especially on heavily
+# vocalized Arabic text, so it can introduce its own word-level
+# reading errors that this character-range check cannot see (a
+# misread letter is still a normal Arabic letter). Switching to
+# OCR is only worth that risk when normal extraction is actually
+# corrupted by a meaningful amount, not just a fraction of a
+# percent lower than OCR's own ratio. 0.015 was chosen from real
+# measurements: a barely-affected page scored well under this
+# (0.0068), while a genuinely corrupted page scored well over it
+# (0.0323).
+MEANINGFUL_CORRUPTION_THRESHOLD = 0.015
+
+
+def suspicious_character_ratio(text: str) -> float | None:
+    """
+    Return the fraction of non-space characters in the given text
+    that fall outside the set of characters normally expected in
+    Arabic or English text, or None if there is too little text to
+    judge reliably.
+    """
+
+    non_space_characters = [
+        character
+        for character in text
+        if not character.isspace()
+    ]
+
+    if len(non_space_characters) < MIN_CHARACTERS_FOR_SUSPICIOUS_CHECK:
+        return None
+
+    suspicious_characters = [
+        character
+        for character in non_space_characters
+        if not EXPECTED_CHARACTER_PATTERN.match(character)
+    ]
+
+    return len(suspicious_characters) / len(non_space_characters)
+
+
+# =========================================================
 # EXTRACT BEST AVAILABLE TEXT FOR A PAGE
 # =========================================================
 
@@ -354,7 +470,10 @@ def extract_page_text(page) -> str:
     """
 
     extracted_text = extract_text_in_reading_order(page)
-    ocr_text = extract_text_with_ocr(page)
+
+    ocr_language = detect_ocr_language(extracted_text)
+
+    ocr_text = extract_text_with_ocr(page, lang=ocr_language)
 
     extracted_length = len(extracted_text.strip())
     ocr_length = len(ocr_text.strip())
@@ -389,7 +508,28 @@ def extract_page_text(page) -> str:
 
         return ocr_text
 
+    extracted_suspicious_ratio = suspicious_character_ratio(extracted_text)
+    ocr_suspicious_ratio = suspicious_character_ratio(ocr_text)
+
+    if (
+        extracted_suspicious_ratio is not None
+        and ocr_suspicious_ratio is not None
+        and extracted_suspicious_ratio > MEANINGFUL_CORRUPTION_THRESHOLD
+        and ocr_suspicious_ratio < extracted_suspicious_ratio
+    ):
+
+        logger.info(
+            "Page: normal extraction is meaningfully corrupted "
+            "and OCR text has fewer unexpected characters "
+            "(%.3f vs %.3f). Using OCR result.",
+            ocr_suspicious_ratio,
+            extracted_suspicious_ratio,
+        )
+
+        return ocr_text
+
     return extracted_text
+#ORC........................................
 #ORC........................................
 
 # =========================================================

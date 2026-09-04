@@ -32,3 +32,19 @@ Thumbs.db
 node_modules/
 frontend/node_modules/
 frontend/dist/
+
+# Claude Code / AI tool internal files
+.claude/
+
+# Test coverage data
+.coverage
+
+# Local reference PDF (test data, not part of the codebase)
+calculus_chapter.pdf
+
+# One-off diagnostic/debug scripts (kept locally only)
+backend/debug_ocr.py
+backend/debug_pdf.py
+backend/debug_pdf2.py
+check_pg_trgm.py
+debug_rag_test.py

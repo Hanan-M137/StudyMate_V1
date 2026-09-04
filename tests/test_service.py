@@ -12,8 +12,10 @@ from anthropic import (
 )
 
 from ai.service import (
+    MIN_CHARACTERS_FOR_SUSPICIOUS_CHECK,
     build_quiz_context,
     clean_text,
+    detect_ocr_language,
     extract_page_text,
     extract_pdf_chunks,
     extract_text_in_reading_order,
@@ -22,6 +24,7 @@ from ai.service import (
     save_quiz_questions,
     select_quiz_chunks,
     split_text_into_chunks,
+    suspicious_character_ratio,
 )
 
 
@@ -92,6 +95,15 @@ def test_clean_text_strips_outer_whitespace():
     result = clean_text(text)
 
     assert result == "Hello world"
+
+
+def test_clean_text_removes_tatweel_characters():
+    with_tatweel = "نَ" + "ـ" + "تَ" + "ـ" + "ـ" + "أمَّ" + "ـ" + "ل"
+    without_tatweel = "نَ" + "تَ" + "أمَّ" + "ل"
+
+    result = clean_text(with_tatweel)
+
+    assert result == without_tatweel
 
 
 # =========================================================
@@ -434,19 +446,6 @@ def test_extract_pdf_chunks_raises_file_not_found_for_missing_file():
 # TEST extract_page_text (mocked collaborators)
 # =========================================================
 
-def test_extract_page_text_uses_normal_extraction_when_ocr_not_meaningfully_longer():
-    with patch(
-        "ai.service.extract_text_in_reading_order",
-        return_value="A" * 100,
-    ), patch(
-        "ai.service.extract_text_with_ocr",
-        return_value="B" * 100,
-    ):
-        result = extract_page_text(object())
-
-    assert result == "A" * 100
-
-
 def test_extract_page_text_switches_to_ocr_when_meaningfully_longer():
     with patch(
         "ai.service.extract_text_in_reading_order",
@@ -460,6 +459,25 @@ def test_extract_page_text_switches_to_ocr_when_meaningfully_longer():
     assert result == "x" * 100
 
 
+def test_extract_page_text_uses_normal_extraction_when_ocr_not_meaningfully_longer():
+    with patch(
+        "ai.service.extract_text_in_reading_order",
+        return_value="A" * 100,
+    ), patch(
+        "ai.service.extract_text_with_ocr",
+        return_value="B" * 100,
+    ), patch(
+        "ai.service.unknown_word_ratio",
+        return_value=None,
+    ), patch(
+        "ai.service.suspicious_character_ratio",
+        return_value=0.0,
+    ):
+        result = extract_page_text(object())
+
+    assert result == "A" * 100
+
+
 def test_extract_page_text_stays_on_normal_extraction_at_boundary():
     normal_text = "n" * 100
 
@@ -469,6 +487,12 @@ def test_extract_page_text_stays_on_normal_extraction_at_boundary():
     ), patch(
         "ai.service.extract_text_with_ocr",
         return_value="o" * 130,
+    ), patch(
+        "ai.service.unknown_word_ratio",
+        return_value=None,
+    ), patch(
+        "ai.service.suspicious_character_ratio",
+        return_value=0.0,
     ):
         result = extract_page_text(object())
 
@@ -476,6 +500,10 @@ def test_extract_page_text_stays_on_normal_extraction_at_boundary():
 
 
 def test_extract_page_text_calls_both_extraction_functions_with_page():
+    # ai/service.py now selects an OCR language before calling
+    # extract_text_with_ocr, so it must be called with page AND
+    # lang= — this assertion previously only expected page, and
+    # broke silently once that language-detection step was added.
     fake_page = object()
 
     with patch(
@@ -484,11 +512,97 @@ def test_extract_page_text_calls_both_extraction_functions_with_page():
     ) as mock_normal, patch(
         "ai.service.extract_text_with_ocr",
         return_value="b",
-    ) as mock_ocr:
+    ) as mock_ocr, patch(
+        "ai.service.unknown_word_ratio",
+        return_value=None,
+    ), patch(
+        "ai.service.suspicious_character_ratio",
+        return_value=0.0,
+    ):
         extract_page_text(fake_page)
 
     mock_normal.assert_called_once_with(fake_page)
-    mock_ocr.assert_called_once_with(fake_page)
+    mock_ocr.assert_called_once_with(fake_page, lang="eng")
+
+
+def test_extract_page_text_switches_to_ocr_when_unknown_word_ratio_is_lower():
+    with patch(
+        "ai.service.extract_text_in_reading_order",
+        return_value="extracted text",
+    ), patch(
+        "ai.service.extract_text_with_ocr",
+        return_value="ocr text",
+    ), patch(
+        "ai.service.unknown_word_ratio",
+        side_effect=[0.8, 0.2],
+    ), patch(
+        "ai.service.suspicious_character_ratio",
+        return_value=0.0,
+    ):
+        result = extract_page_text(object())
+
+    assert result == "ocr text"
+
+
+def test_extract_page_text_unknown_word_ratio_none_falls_through_to_next_check():
+    with patch(
+        "ai.service.extract_text_in_reading_order",
+        return_value="extracted text",
+    ), patch(
+        "ai.service.extract_text_with_ocr",
+        return_value="ocr text",
+    ), patch(
+        "ai.service.unknown_word_ratio",
+        return_value=None,
+    ), patch(
+        "ai.service.suspicious_character_ratio",
+        return_value=0.0,
+    ):
+        result = extract_page_text(object())
+
+    assert result == "extracted text"
+
+
+def test_extract_page_text_switches_to_ocr_when_meaningfully_corrupted():
+    with patch(
+        "ai.service.extract_text_in_reading_order",
+        return_value="extracted text",
+    ), patch(
+        "ai.service.extract_text_with_ocr",
+        return_value="ocr text",
+    ), patch(
+        "ai.service.unknown_word_ratio",
+        return_value=None,
+    ), patch(
+        "ai.service.suspicious_character_ratio",
+        side_effect=[0.05, 0.01],
+    ):
+        result = extract_page_text(object())
+
+    assert result == "ocr text"
+
+
+def test_extract_page_text_minor_suspicious_ratio_difference_does_not_switch():
+    # This is the exact real regression we found and fixed earlier
+    # (page 93): a barely-affected page (ratio below
+    # MEANINGFUL_CORRUPTION_THRESHOLD) must NOT be replaced by OCR
+    # just because OCR's ratio happens to be marginally lower.
+    with patch(
+        "ai.service.extract_text_in_reading_order",
+        return_value="extracted text",
+    ), patch(
+        "ai.service.extract_text_with_ocr",
+        return_value="ocr text",
+    ), patch(
+        "ai.service.unknown_word_ratio",
+        return_value=None,
+    ), patch(
+        "ai.service.suspicious_character_ratio",
+        side_effect=[0.005, 0.001],
+    ):
+        result = extract_page_text(object())
+
+    assert result == "extracted text"
 
 
 # =========================================================
@@ -1059,3 +1173,59 @@ def test_save_quiz_questions_calls_db_commit_and_add():
 
     mock_db.commit.assert_called_once()
     mock_db.add.assert_called_once()
+
+
+# =========================================================
+# TEST detect_ocr_language
+# =========================================================
+
+def test_detect_ocr_language_arabic_text():
+    assert detect_ocr_language(
+        "هذا نص عربي طويل يشرح قاعدة نحوية"
+    ) == "ara"
+
+
+def test_detect_ocr_language_english_text():
+    assert detect_ocr_language(
+        "This is a fairly long English sentence"
+    ) == "eng"
+
+
+def test_detect_ocr_language_equal_counts_defaults_to_english():
+    assert detect_ocr_language("ab اب") == "eng"
+
+
+def test_detect_ocr_language_empty_text_defaults_to_english():
+    assert detect_ocr_language("") == "eng"
+
+
+# =========================================================
+# TEST suspicious_character_ratio
+# =========================================================
+
+def test_suspicious_character_ratio_none_for_short_text():
+    short_text = "a" * (MIN_CHARACTERS_FOR_SUSPICIOUS_CHECK - 1)
+    assert suspicious_character_ratio(short_text) is None
+
+
+def test_suspicious_character_ratio_not_none_at_minimum_length():
+    exact_length_text = "a" * MIN_CHARACTERS_FOR_SUSPICIOUS_CHECK
+    assert suspicious_character_ratio(exact_length_text) is not None
+
+
+def test_suspicious_character_ratio_zero_for_clean_latin_text():
+    clean = "abcdefghij" * (MIN_CHARACTERS_FOR_SUSPICIOUS_CHECK // 10)
+    assert suspicious_character_ratio(clean) == pytest.approx(0.0)
+
+
+def test_suspicious_character_ratio_zero_for_clean_arabic_text():
+    arabic_text = "كتاب " * 15
+    assert suspicious_character_ratio(arabic_text) == pytest.approx(0.0)
+
+
+def test_suspicious_character_ratio_positive_when_foreign_script_present():
+    base = "abcdefghij" * (MIN_CHARACTERS_FOR_SUSPICIOUS_CHECK // 10)
+    corrupted = base + "ԽԽԽ"
+    ratio = suspicious_character_ratio(corrupted)
+    expected = 3 / (len(base) + 3)
+    assert ratio == pytest.approx(expected)
