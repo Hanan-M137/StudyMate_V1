@@ -22,8 +22,11 @@ The system allows students to:
 StudyMate/
 
 ├── ai/
+│   ├── anthropic_client.py
 │   ├── embedding_service.py
+│   ├── input_gate.py
 │   ├── rag_service.py
+│   ├── reranker_service.py
 │   └── service.py
 │
 ├── backend/
@@ -32,12 +35,18 @@ StudyMate/
 │   ├── main.py
 │   └── models.py
 │
-├── frontend/
+├── studymate-frontend/
+│
+├── tests/
+│   ├── test_auth.py
+│   ├── test_rag_service.py
+│   └── test_service.py
 │
 ├── uploads/
 │
 ├── .env.example
 ├── .gitignore
+├── pytest.ini
 ├── README.md
 └── requirements.txt
 ```
@@ -51,6 +60,7 @@ Before running the project, make sure you have:
 - Python 3.11 or later
 - PostgreSQL
 - PostgreSQL pgvector extension
+- PostgreSQL pg_trgm extension
 - An Anthropic API key
 
 ---
@@ -97,7 +107,7 @@ Do not commit the `.env` file to GitHub because it may contain secrets such as A
 
 ## Database Setup
 
-StudyMate uses PostgreSQL with the pgvector extension.
+StudyMate uses PostgreSQL with the pgvector extension, and additionally uses PostgreSQL's built-in pg_trgm extension for hybrid (lexical + semantic) search on Arabic questions.
 
 Make sure PostgreSQL is installed and running.
 
@@ -108,6 +118,10 @@ Example:
     DATABASE_URL=postgresql+psycopg://username:password@localhost:5432/studymate
 
 The application enables the pgvector extension when the database is initialized.
+
+The pg_trgm extension must currently be enabled manually. Connect to the database and run:
+
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 ---
 
@@ -131,6 +145,18 @@ FastAPI interactive documentation is available at:
 
 ---
 
+## Running Tests
+
+The project includes an automated test suite (pytest) covering authentication, PDF/text-processing logic, and the RAG retrieval pipeline.
+
+From the project root, with the virtual environment activated:
+
+    python -m pytest tests -v
+
+Use `python -m pytest` rather than a bare `pytest` command, to make sure the virtual environment's own installed packages are used rather than any global installation.
+
+---
+
 ## AI and RAG
 
 StudyMate uses a Retrieval-Augmented Generation (RAG) pipeline.
@@ -138,14 +164,17 @@ StudyMate uses a Retrieval-Augmented Generation (RAG) pipeline.
 The main steps are:
 
 1. A PDF document is uploaded.
-2. Text is extracted from the PDF.
+2. Text is extracted from the PDF using PyMuPDF, with a Tesseract OCR fallback for pages where the extracted text looks incomplete or corrupted.
 3. The document is divided into chunks.
 4. Embeddings are generated using sentence-transformers.
 5. Embeddings are stored in PostgreSQL using pgvector.
-6. When a student asks a question, relevant chunks are retrieved.
-7. The retrieved content is provided to the Claude model.
-8. Claude generates an answer based on the retrieved document content.
-9. The relevant source passages and page references are returned with the answer.
+6. When a student sends a chat message, an input gate first checks whether it is trivial small talk (a greeting or a closing, in Arabic or English). If so, an instant canned reply is returned immediately without calling the AI pipeline.
+7. Otherwise, relevant chunks are retrieved:
+   - For English questions: a direct dense (embedding-based) similarity search.
+   - For Arabic questions: a hybrid search that combines dense similarity with PostgreSQL trigram lexical similarity (pg_trgm) using Reciprocal Rank Fusion (RRF), then narrows the combined candidates further with a cross-encoder reranking model for more precise relevance.
+8. The retrieved content is provided to the Claude model.
+9. Claude generates an answer based on the retrieved document content.
+10. The relevant source passages and page references are returned with the answer.
 
 The embedding model used by the project is:
 
@@ -154,6 +183,10 @@ The embedding model used by the project is:
 The embedding dimension is:
 
     384
+
+The reranking model used for Arabic questions is:
+
+    cross-encoder/mmarco-mMiniLMv2-L12-H384-v1
 
 ---
 
@@ -165,19 +198,21 @@ The embedding dimension is:
 - SQLAlchemy
 - PostgreSQL
 - pgvector
+- pg_trgm
 - Pydantic
-- JWT authentication
+- JWT authentication (PyJWT) and password hashing (passlib + bcrypt)
 
 ### AI
 
 - Anthropic Claude API
-- Sentence Transformers
-- Retrieval-Augmented Generation (RAG)
-- PDF text extraction using pypdf
+- Sentence Transformers (embeddings and cross-encoder reranking)
+- Retrieval-Augmented Generation (RAG) with hybrid search (dense + pg_trgm lexical search combined via Reciprocal Rank Fusion) for Arabic questions
+- PDF text extraction using PyMuPDF (fitz), with Tesseract OCR (pytesseract) as a fallback for low-quality pages
+- pyspellchecker, used to help judge extraction quality on English text
 
 ### Frontend
 
-The frontend directory contains the client-side application.
+The `studymate-frontend/` directory contains the client-side application.
 
 ---
 

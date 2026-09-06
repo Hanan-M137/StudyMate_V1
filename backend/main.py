@@ -137,6 +137,9 @@ class DocumentResponse(BaseModel):
         from_attributes = True
 
 
+class DocumentUpdateRequest(BaseModel):
+    title: str
+
 class ChatRequest(BaseModel):
     document_id: UUID
     message: str
@@ -521,6 +524,66 @@ def get_document(
 
     return document
 
+    if not document:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found",
+        )
+
+    return document
+
+
+# =========================================================
+# UPDATE DOCUMENT TITLE
+# =========================================================
+
+@app.patch(
+    "/documents/{document_id}",
+    response_model=DocumentResponse,
+)
+def update_document(
+    document_id: UUID,
+    update_data: DocumentUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Update a document's display title.
+
+    Only the title can be changed here. The underlying
+    file, its path, and its processing status are never
+    touched by this endpoint.
+    """
+
+    document = (
+        db.query(Document)
+        .filter(
+            Document.id == document_id,
+            Document.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not document:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found",
+        )
+
+    new_title = update_data.title.strip()
+
+    if not new_title:
+        raise HTTPException(
+            status_code=400,
+            detail="Title cannot be empty",
+        )
+
+    document.title = new_title
+
+    db.commit()
+    db.refresh(document)
+
+    return document
 
 # =========================================================
 # DELETE DOCUMENT
