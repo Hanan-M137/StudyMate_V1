@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 from dataclasses import dataclass
 from uuid import UUID
@@ -67,6 +68,65 @@ RRF_K = 60
 # comparison than RRF, so it only ever looks at this shortlist,
 # never the whole document.
 RERANK_CANDIDATE_COUNT = 20
+
+
+# =========================================================
+# QUERY REWRITE SETTINGS
+# =========================================================
+
+# A rewritten question should be a tidied-up version of what the
+# student asked, not a new paragraph. If the model ignores its
+# instructions and returns an explanation instead of a question,
+# the result is discarded and the original question is used. The
+# floor exists because the ratio alone is unusable for very short
+# questions: "5+5" is three characters, and four times that would
+# reject any sane rewrite.
+#
+# The floor was raised from 200 after measuring how much the
+# rewrite length varies for identical input. The same nine
+# character follow-up, with an unchanged prompt, produced
+# rewrites of 255, 98 and 44 characters across three consecutive
+# runs in the same conversation. A floor of 200 discarded the
+# longest of them, sending a legitimate follow-up down the
+# general-knowledge path with no citations. The length of a
+# correct rewrite is not predictable enough to sit a tight limit
+# against, so the floor covers the upper end of that spread
+# rather than its middle. A runaway answer, the case this guard
+# actually exists for, runs to well over a thousand characters
+# and is still caught comfortably.
+REWRITE_MAX_LENGTH_RATIO = 4
+REWRITE_MAX_LENGTH_FLOOR = 300
+
+# =========================================================
+# CLAUDE MODEL SELECTION
+# =========================================================
+
+def get_fast_claude_model() -> str:
+    """
+    Return the model id to use for cheap, mechanical calls such as
+    rewriting a follow-up question into a standalone one.
+
+    These calls are internal plumbing; the student never reads
+    their output directly, so they do not need the main model.
+    CLAUDE_FAST_MODEL is used when it is configured, and
+    CLAUDE_MODEL is the fallback when it is not, so the feature
+    still works on a deployment that has never heard of it.
+    """
+
+    fast_model = os.getenv("CLAUDE_FAST_MODEL")
+
+    if fast_model:
+        return fast_model
+
+    claude_model = os.getenv("CLAUDE_MODEL")
+
+    if claude_model:
+        return claude_model
+
+    raise RuntimeError(
+        "Neither CLAUDE_FAST_MODEL nor CLAUDE_MODEL is set "
+        "in the .env file"
+    )
 
 
 # =========================================================
@@ -139,6 +199,106 @@ Rules:
     version of the unclear formula, and do not cite a specific
     page number next to a formula or symbol you are not confident
     about.
+""".strip()
+
+
+# =========================================================
+# QUERY REWRITE SYSTEM PROMPT
+# =========================================================
+#
+# Used only for the internal rewrite step. The student never sees
+# this output; it is fed straight back into retrieval as a search
+# query, which is why the prompt is so insistent about returning
+# nothing but the question itself.
+
+REWRITE_SYSTEM_PROMPT = """
+You rewrite a student's latest message into a single, standalone
+question that can be understood on its own, without the
+conversation around it.
+
+Use the conversation history to work out what the message refers
+to. If the student writes "explain that more simply", find what
+"that" points at in the previous messages and name it explicitly
+in the rewritten question.
+
+Rules:
+1. Output ONLY the rewritten question. No preamble, no
+   explanation, no commentary, no quotation marks around it.
+2. If the message is already self-contained, return it completely
+   unchanged.
+3. Keep the rewritten question in the same language the student
+   used.
+4. Keep it short. It is a question, not a summary.
+5. Never answer the question. Only rewrite it.
+6. Never ask the student anything. Your output is a search query
+   for a document, not a message to a person. If the message
+   could refer to more than one thing in the conversation, name
+   all of the likely topics in the rewritten question instead of
+   asking which one is meant.
+""".strip()
+
+
+# =========================================================
+# GENERAL KNOWLEDGE SYSTEM PROMPT
+# =========================================================
+#
+# The main SYSTEM_PROMPT above forbids outside knowledge, which is
+# the opposite of what is needed once retrieval has found nothing.
+# This prompt is used only on that path.
+
+GENERAL_KNOWLEDGE_SYSTEM_PROMPT = """
+You are StudyMate, an AI study assistant for university students.
+
+The student asked a question and it was NOT found anywhere in the
+document they uploaded. You are answering without any document
+context. Decide which of the three cases below applies, and answer
+accordingly.
+
+CASE 1 - A legitimate educational or academic question.
+For example arithmetic, a definition, an explanation of a concept,
+or a short translation of study material. Answer it properly and
+helpfully. Begin by making clear, in one short sentence, that this
+answer comes from general knowledge and not from the student's
+document, then give the answer.
+
+CASE 2 - A question about you, or a vague request for help.
+For example "can you help me", "what can you do", "who are you".
+Briefly say what StudyMate does: it answers questions about the
+documents a student uploads, explains concepts from them, and
+creates quizzes from them. Then invite the student to ask
+something about their document. Keep it to a few sentences.
+
+CASE 3 - Anything outside studying.
+For example weather, sport, news, entertainment, shopping,
+personal or medical advice, or anything that needs live or
+real-time data you do not have. Politely decline in one or two
+sentences and point the student back to their document. Do not
+guess and do not pretend to have current information.
+
+THE BOUNDARY BETWEEN HELPING AND SUBSTITUTING:
+Answer questions that teach the student something. Decline to
+produce work that replaces the student's own effort. Do not write
+a full essay for them, and do not produce a finished set of
+homework or exam answers. When you are asked for that, say plainly
+that you will not do the work for them, and offer the alternative:
+explain the topic, walk through the method, work one example, or
+check reasoning the student has already written. Explaining how to
+solve a problem is help. Handing over the completed answers is not.
+
+FORMATTING AND LANGUAGE:
+Keep formatting simple and consistent. Do NOT use markdown headers
+(like ## or ###), emojis, or heavy bold formatting. Write in plain
+sentences and short paragraphs, the way a teacher would explain
+something directly to a student. You may use short bullet points
+ONLY when the question explicitly asks for a list or a comparison
+of multiple items, and even then keep them plain text.
+
+Always answer in the same language the student used to ask their
+question. If the question is written in Arabic, the entire answer
+must be written fully in Arabic. If the question is written in
+English, the entire answer must be fully in English. Never mix two
+languages within a single answer, and never default to English
+when the question was asked in Arabic.
 """.strip()
 
 # =========================================================
@@ -648,6 +808,257 @@ Include page citations such as [Page 3].
 
 
 # =========================================================
+# BUILD CLAUDE MESSAGES
+# =========================================================
+
+def _build_conversation_messages(
+    conversation_history: list[dict] | None,
+    current_content: str,
+) -> list[dict]:
+    """
+    Build an Anthropic messages list from the previous conversation
+    followed by the current turn, dropping any history entry with an
+    unusable role or empty content.
+    """
+
+    if conversation_history is None:
+        conversation_history = []
+
+    messages = []
+
+    for message in conversation_history:
+
+        role = message.get("role")
+        content = message.get("content")
+
+        if role not in {"user", "assistant"}:
+            continue
+
+        if not content:
+            continue
+
+        messages.append(
+            {
+                "role": role,
+                "content": str(content),
+            }
+        )
+
+    messages.append(
+        {
+            "role": "user",
+            "content": current_content,
+        }
+    )
+
+    return messages
+
+
+# =========================================================
+# REWRITE FOLLOW-UP QUESTION
+# =========================================================
+
+def rewrite_question_with_history(
+    question: str,
+    conversation_history: list[dict] | None,
+) -> str:
+    """
+    Turn a short follow-up message into a standalone question,
+    using the conversation history to resolve what it refers to.
+
+    "explain that more simply" carries almost no searchable content
+    on its own, so retrieving with it directly finds nothing. Asking
+    the model what "that" meant produces a question that can be
+    searched for.
+
+    This step must never break a chat request. Any failure - an API
+    error, an empty reply, or a reply long enough to be an
+    explanation rather than a question - returns the original
+    question unchanged, and the caller simply carries on with what
+    the student actually typed.
+
+    No document context is sent to this call.
+    """
+
+    try:
+
+        client = get_anthropic_client()
+
+        messages = _build_conversation_messages(
+            conversation_history,
+            question,
+        )
+
+        response = client.messages.create(
+            model=get_fast_claude_model(),
+            max_tokens=200,
+            system=REWRITE_SYSTEM_PROMPT,
+            messages=messages,
+        )
+
+        rewritten_parts = [
+            block.text
+            for block in response.content
+            if block.type == "text"
+        ]
+
+        rewritten = "\n".join(rewritten_parts).strip()
+
+        # The prompt forbids quotation marks, but a stray pair
+        # would be searched for literally, so drop them.
+        if len(rewritten) >= 2:
+            if rewritten[0] == '"' and rewritten[-1] == '"':
+                rewritten = rewritten[1:-1].strip()
+
+        if not rewritten:
+            logger.warning(
+                "Query rewrite returned nothing; "
+                "using the original question"
+            )
+            return question
+
+        maximum_length = max(
+            REWRITE_MAX_LENGTH_FLOOR,
+            REWRITE_MAX_LENGTH_RATIO * len(question),
+        )
+
+        if len(rewritten) > maximum_length:
+            logger.warning(
+                "Query rewrite returned %s characters for a %s "
+                "character question, which looks like an "
+                "explanation rather than a question; using the "
+                "original question",
+                len(rewritten),
+                len(question),
+            )
+            return question
+
+        return rewritten
+
+    except Exception:
+
+        logger.warning(
+            "Query rewrite failed; using the original question",
+            exc_info=True,
+        )
+
+        return question
+
+
+# =========================================================
+# GENERATE GENERAL KNOWLEDGE ANSWER WITH CLAUDE
+# =========================================================
+
+def generate_general_answer_with_claude(
+    question: str,
+    conversation_history: list[dict] | None = None,
+) -> str:
+    """
+    Answer a question that retrieval could not find in the
+    student's document, using general knowledge instead.
+
+    This is the path for a student who asks "what is 5+5" or "what
+    can you do" while a document is open. Returning a dead end
+    there is worse than answering, so the model is given a prompt
+    that permits outside knowledge and asked to decide whether the
+    question deserves a real answer, a description of StudyMate, or
+    a polite refusal.
+
+    No document context is sent to this call.
+    """
+
+    # -----------------------------------------------------
+    # Create Anthropic client
+    # -----------------------------------------------------
+
+    client = get_anthropic_client()
+
+    # -----------------------------------------------------
+    # Get Claude model from .env
+    # -----------------------------------------------------
+    #
+    # The main model, not the fast one: the student reads this
+    # answer, so its quality matters as much as a document answer.
+
+    claude_model = os.getenv(
+        "CLAUDE_MODEL"
+    )
+
+    if not claude_model:
+        raise RuntimeError(
+            "CLAUDE_MODEL is missing from the .env file"
+        )
+
+    # -----------------------------------------------------
+    # Build Claude messages
+    # -----------------------------------------------------
+
+    messages = _build_conversation_messages(
+        conversation_history,
+        question,
+    )
+
+    # -----------------------------------------------------
+    # Call Claude
+    # -----------------------------------------------------
+
+    try:
+
+        response = client.messages.create(
+            model=claude_model,
+            max_tokens=1000,
+            system=GENERAL_KNOWLEDGE_SYSTEM_PROMPT,
+            messages=messages,
+        )
+
+    except RateLimitError as error:
+
+        raise RuntimeError(
+            "The AI service rate limit was reached. "
+            "Please try again later."
+        ) from error
+
+    except APITimeoutError as error:
+
+        raise RuntimeError(
+            "The AI service took too long to respond."
+        ) from error
+
+    except APIConnectionError as error:
+
+        raise RuntimeError(
+            "Could not connect to the AI service."
+        ) from error
+
+    except APIStatusError as error:
+
+        raise RuntimeError(
+            f"The AI service returned an error: {error}"
+        ) from error
+
+    # -----------------------------------------------------
+    # Extract text from Claude response
+    # -----------------------------------------------------
+
+    answer_parts = [
+        block.text
+        for block in response.content
+        if block.type == "text"
+    ]
+
+    answer = "\n".join(
+        answer_parts
+    ).strip()
+
+    if not answer:
+        raise RuntimeError(
+            "The AI service returned an empty answer"
+        )
+
+    return answer
+
+
+# =========================================================
 # COMPLETE RAG PIPELINE
 # =========================================================
 
@@ -661,14 +1072,17 @@ def answer_question(
     Complete RAG pipeline:
 
     1. Check document readiness
-    2. Generate question embedding
-    3. Retrieve relevant chunks
-    4. Calculate similarity
-    5. Filter irrelevant chunks
-    6. Load conversation history
-    7. Send conversation history + document context
+    2. Check the input gate for trivial small talk
+    3. Retrieve relevant chunks and filter them by
+       MINIMUM_RERANK_SCORE
+    4. If nothing survived and there is conversation history,
+       rewrite the question into a standalone one and retrieve
+       again with it
+    5. If nothing survived either way, answer from general
+       knowledge with no sources
+    6. Otherwise send conversation history + document context
        + current question to Claude
-    8. Return answer and sources
+    7. Return answer and sources
 
     conversation_history:
         Previous messages from the current conversation.
@@ -742,55 +1156,39 @@ def answer_question(
         if chunk.rerank_score is not None
         and chunk.rerank_score >= MINIMUM_RERANK_SCORE
     ]
+    used_rewrite = False
+
     # -----------------------------------------------------
-    # Retry retrieval using recent conversation context
+    # Retry retrieval using a rewritten question
     # -----------------------------------------------------
     #
-    # A short follow-up question (e.g. "explain the first
-    # point in more detail") often has no meaningful content
-    # on its own, so the raw-question search above may find
-    # nothing. If we have conversation history, retry the
-    # search using the last user question and last assistant
-    # answer combined with the current question, so the
-    # search has enough context to find the right chunks.
+    # A short follow-up ("explain that more simply") carries
+    # almost no searchable content on its own, so the search
+    # above finds nothing. Ask the model what the message
+    # actually refers to, and search again with that.
+    #
+    # The question is rewritten rather than concatenated with
+    # the previous turn: pasting the last question and answer
+    # in front of the current one searches for the PREVIOUS
+    # topic, which is why "5+5" used to come back with five
+    # unrelated chunks all scoring above +6.8.
 
     if not relevant_chunks and conversation_history:
 
-        last_user_message = None
-        last_assistant_message = None
+        rewritten_question = rewrite_question_with_history(
+            question=question,
+            conversation_history=conversation_history,
+        )
 
-        for message in reversed(conversation_history):
-            role = message.get("role")
-            content = message.get("content")
-
-            if not content:
-                continue
-
-            if role == "assistant" and last_assistant_message is None:
-                last_assistant_message = str(content)
-
-            if role == "user" and last_user_message is None:
-                last_user_message = str(content)
-
-            if last_user_message and last_assistant_message:
-                break
-
-        context_parts = [
-            text
-            for text in (last_user_message, last_assistant_message)
-            if text
-        ]
-
-        if context_parts:
-
-            combined_question = "\n".join(
-                context_parts + [question]
-            )
+        # An unchanged rewrite means the question was already
+        # self-contained, so a second identical search would
+        # return the same nothing at the same cost.
+        if rewritten_question != question:
 
             chunks = retrieve_relevant_chunks(
                 db=db,
                 document_id=document_id,
-                question=combined_question,
+                question=rewritten_question,
             )
 
             relevant_chunks = [
@@ -800,19 +1198,38 @@ def answer_question(
                 and chunk.rerank_score >= MINIMUM_RERANK_SCORE
             ]
 
+            if relevant_chunks:
+                used_rewrite = True
+                logger.info(
+                    "Answer path: document-after-rewrite | "
+                    "original=%r | rewritten=%r",
+                    question,
+                    rewritten_question,
+                )
+
     # -----------------------------------------------------
-    # No relevant information found
+    # Nothing in the document: answer from general knowledge
     # -----------------------------------------------------
+    #
+    # A student who asks something their document does not
+    # cover is better served by an answer than by a dead end.
 
     if not relevant_chunks:
 
+        logger.info("Answer path: general-knowledge")
+
+        answer = generate_general_answer_with_claude(
+            question=question,
+            conversation_history=conversation_history,
+        )
+
         return {
-            "answer": (
-                "I could not find this information "
-                "in your document."
-            ),
+            "answer": answer,
             "sources": [],
         }
+
+    if not used_rewrite:
+        logger.info("Answer path: document")
 
     # -----------------------------------------------------
     # Generate answer with Claude

@@ -1,3 +1,7 @@
+import logging
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
 import os
 import shutil
 from uuid import UUID, uuid4
