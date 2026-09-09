@@ -1,3 +1,4 @@
+import logging
 import re
 from dataclasses import dataclass
 from uuid import UUID
@@ -30,21 +31,39 @@ load_dotenv()
 
 
 # =========================================================
+# LOGGING
+# =========================================================
+
+logger = logging.getLogger(__name__)
+
+
+# =========================================================
 # RAG SETTINGS
 # =========================================================
 
 TOP_K = 5
+# Kept for reference only. Relevance filtering now uses
+# MINIMUM_RERANK_SCORE below; nothing reads this value.
 MINIMUM_SIMILARITY = 0.30
 
+# Minimum cross-encoder reranker score for a chunk to be treated as
+# relevant. The reranker reads the question and the chunk together,
+# so its score reflects actual relevance far better than the dense
+# cosine similarity, which was measured to be misleading in both
+# directions: it discarded a correct chunk scoring 0.2867 and kept
+# unrelated chunks scoring above 0.60. A positive score means the
+# model judged the chunk relevant, so 0.0 is the natural cut-off.
+MINIMUM_RERANK_SCORE = 0.0
+
 # Reciprocal Rank Fusion constant used when combining the dense
-# (embedding) ranking with the lexical (trigram) ranking for Arabic
-# questions. A higher value makes the fused score less sensitive to
-# small differences between nearby ranks; 60 is the commonly used
+# (embedding) ranking with the two lexical (trigram) rankings. A
+# higher value makes the fused score less sensitive to small
+# differences between nearby ranks; 60 is the commonly used
 # default for RRF.
 RRF_K = 60
 
-# How many top RRF candidates to hand to the cross-encoder reranker
-# for Arabic questions. The reranker is much more expensive per
+# How many top RRF candidates to hand to the cross-encoder reranker.
+# The reranker is much more expensive per
 # comparison than RRF, so it only ever looks at this shortlist,
 # never the whole document.
 RERANK_CANDIDATE_COUNT = 20
@@ -132,6 +151,7 @@ class RetrievedChunk:
     content: str
     page_number: int
     similarity: float
+    rerank_score: float | None = None
 
 
 # =========================================================
@@ -147,10 +167,10 @@ def is_arabic_question(question: str) -> bool:
     Decide whether the student's question is written mainly in
     Arabic, based on a simple character-range count.
 
-    This is checked per-question, not per-document, so a document
-    in one language can still be asked about in another, and the
-    Arabic-specific retrieval improvements below only activate when
-    they are actually needed.
+    Not currently called by the retrieval path: every question now
+    goes through the same hybrid search regardless of language.
+    Kept for the upcoming cross-language handling, which needs to
+    compare the question's language against the document's.
     """
     arabic_count = len(ARABIC_CHARACTER_PATTERN.findall(question))
     latin_count = len(LATIN_CHARACTER_PATTERN.findall(question))
@@ -217,13 +237,11 @@ def retrieve_relevant_chunks(
     """
     Retrieve the chunks most relevant to the student's question.
 
-    For non-Arabic questions, this is a pure dense (embedding)
-    similarity search, exactly as before.
-
-    For Arabic questions, dense search alone under-performs because
-    the embedding model (all-MiniLM-L6-v2) was not trained
+    Every question, in any language, goes through the same hybrid
+    retrieval path. Dense (embedding) search alone under-performs
+    because the embedding model (all-MiniLM-L6-v2) was not trained
     specifically for Arabic, and we are not changing that model.
-    To compensate, Arabic questions also run a lexical
+    To compensate, every question also runs a lexical
     (character-trigram) search against the chunk text using
     PostgreSQL's pg_trgm extension, and the dense ranking and the
     two trigram rankings are combined using Reciprocal Rank Fusion
@@ -265,26 +283,8 @@ def retrieve_relevant_chunks(
     )
 
     # -----------------------------------------------------
-    # Non-Arabic question: unchanged pure dense search
-    # -----------------------------------------------------
-
-    if not is_arabic_question(question):
-
-        results = dense_query.limit(top_k).all()
-
-        return [
-            RetrievedChunk(
-                id=chunk.id,
-                content=chunk.content,
-                page_number=chunk.page_number,
-                similarity=1.0 - float(cosine_distance),
-            )
-            for chunk, cosine_distance in results
-        ]
-
-    # -----------------------------------------------------
-    # Arabic question: hybrid dense + lexical (trigram)
-    # search, combined with Reciprocal Rank Fusion
+    # Hybrid dense + lexical (trigram) search, combined
+    # with Reciprocal Rank Fusion
     # -----------------------------------------------------
 
     dense_results = dense_query.all()
@@ -341,10 +341,6 @@ def retrieve_relevant_chunks(
     # Combine all rankings with Reciprocal Rank Fusion
     # -----------------------------------------------------
 
-    # -----------------------------------------------------
-    # Combine all rankings with Reciprocal Rank Fusion
-    # -----------------------------------------------------
-
     combined_score_by_chunk_id = compute_rrf_scores(
         chunk_by_id.keys(),
         dense_rank_by_chunk_id,
@@ -380,7 +376,12 @@ def retrieve_relevant_chunks(
 
     retrieved_chunks = []
 
-    for chunk_id, chunk, _rerank_score in reranked_candidates:
+    for chunk_id, chunk, rerank_score in reranked_candidates:
+
+        dense_similarity = dense_similarity_by_chunk_id.get(
+            chunk_id, 0.0
+        )
+
 
         retrieved_chunks.append(
             RetrievedChunk(
@@ -388,13 +389,13 @@ def retrieve_relevant_chunks(
                 content=chunk.content,
                 page_number=chunk.page_number,
                 # Reported similarity stays the dense/embedding
-                # similarity (0.0 if the chunk had no embedding),
-                # so the MINIMUM_SIMILARITY relevance filter further
-                # down the pipeline keeps working the same way it
-                # always has.
-                similarity=dense_similarity_by_chunk_id.get(
-                    chunk_id, 0.0
-                ),
+                # similarity (0.0 if the chunk had no embedding).
+                # It no longer drives any filtering decision; it is
+                # kept because it is returned to the frontend and
+                # shown to the student as the match percentage on
+                # each cited source.
+                similarity=dense_similarity,
+                rerank_score=rerank_score,
             )
         )
 
@@ -738,10 +739,9 @@ def answer_question(
     relevant_chunks = [
         chunk
         for chunk in chunks
-        if chunk.similarity
-        >= MINIMUM_SIMILARITY
+        if chunk.rerank_score is not None
+        and chunk.rerank_score >= MINIMUM_RERANK_SCORE
     ]
-
     # -----------------------------------------------------
     # Retry retrieval using recent conversation context
     # -----------------------------------------------------
@@ -796,8 +796,8 @@ def answer_question(
             relevant_chunks = [
                 chunk
                 for chunk in chunks
-                if chunk.similarity
-                >= MINIMUM_SIMILARITY
+                if chunk.rerank_score is not None
+                and chunk.rerank_score >= MINIMUM_RERANK_SCORE
             ]
 
     # -----------------------------------------------------
