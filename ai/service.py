@@ -406,6 +406,8 @@ def unknown_word_ratio(text: str) -> float | None:
 
 EXPECTED_CHARACTER_PATTERN = re.compile(
     r"[؀-ۿ"
+    r"\ufb50-\ufdff\ufe70-\ufeff"
+    r"\u200e\u200f"
     r"A-Za-z0-9"
     r".,;:!?()\[\]{}\"'\-/\\@#%&*+=<>_~`|^$ ﻿]"
 )
@@ -450,7 +452,147 @@ def suspicious_character_ratio(text: str) -> float | None:
 
     return len(suspicious_characters) / len(non_space_characters)
 
+# =========================================================
+# BROKEN FONT ENCODING (extract mod1)
+# =========================================================
+#
+# Some Arabic PDFs embed a font whose character map is wrong: the
+# shape drawn on the page is correct, but the code point the
+# extractor reads belongs to a different script. In the
+# seventh-grade Arabic textbook three separate characters all
+# stand for alef, one per font used in the book:
+#
+#     السّȌبِعَة -> السّابِعَة       الҙأسْئِلَة -> الأسْئِلَة
+#
+# Measured over that document: 1777 substituted characters on 118
+# of its 120 pages, touching 9.6% of its Arabic words. Each of the
+# three appears in varied company - before a hamza, before
+# ل ت ب ن س, and at the end of a word - which is what identifies
+# it as a letter rather than an artifact of a ligature.
+SUBSTITUTED_CHARACTERS = {
+    "\u020c": "ا",   # Ȍ  LATIN CAPITAL LETTER O WITH DOUBLE GRAVE
+    "\u0499": "ا",   # ҙ  CYRILLIC SMALL LETTER ZE WITH DESCENDER
+    "\u053d": "ا",   # Խ  ARMENIAN CAPITAL LETTER XEH
+}
 
+# Symbol-font glyphs - a tick, a cross, a phone icon - land in the
+# private use area and carry no text at all.
+PRIVATE_USE_PATTERN = re.compile(r"[\ue000-\uf8ff]")
+
+# The same extractor writes hamza-alef as two characters: a bare
+# alef followed by the letter itself. Undone AFTER the substitution
+# above, so الҙأسْئِلَة becomes الاأسْئِلَة becomes الأسْئِلَة.
+DOUBLED_HAMZA = {
+    "اأ": "أ",
+    "اإ": "إ",
+    "اآ": "آ",
+}
+
+
+def repair_broken_encoding(text: str) -> str:
+    """
+    Undo the character substitution a broken font encoding causes.
+
+    Applied word by word, and only to words that already contain
+    Arabic, so a document that legitimately uses one of these
+    characters - an Armenian or a Croatian text - is left alone.
+    """
+
+    if not text:
+        return ""
+
+    def repair_word(word: str) -> str:
+
+        if not ARABIC_CHARACTER_PATTERN.search(word):
+            return word
+
+        for wrong, right in SUBSTITUTED_CHARACTERS.items():
+            word = word.replace(wrong, right)
+
+        word = PRIVATE_USE_PATTERN.sub("", word)
+
+        for wrong, right in DOUBLED_HAMZA.items():
+            word = word.replace(wrong, right)
+
+        return word
+
+    return "".join(
+        piece if piece.isspace() else repair_word(piece)
+        for piece in re.split(r"(\s+)", text)
+    )
+# =========================================================
+# ARABIC WORD-LENGTH QUALITY CHECK(extract mod3)
+# =========================================================
+#
+# When OCR fails on an Arabic page it does not return LESS text, it
+# returns more: it breaks words into single letters and reads
+# decorative borders as long strings of punctuation. Both the
+# length rule and the suspicious-character rule below therefore
+# read a failed OCR result as an improvement, and on this textbook
+# they stored it over perfectly readable text on ten pages.
+#
+# Average Arabic word length separates the two, but only as a
+# comparison between the two candidates for the SAME page, never as
+# a fixed threshold. Measured over those ten pages, normal
+# extraction averaged 2.67 to 5.50 and OCR 0.00 to 3.63 - the two
+# ranges overlap, so no single cut-off can split them. The gap
+# between the two candidates on one page, however, was never
+# smaller than 0.82, which is why the margin below sits at 0.5.
+
+MIN_ARABIC_WORDS_FOR_QUALITY = 8#تعديل من 15 
+
+ARABIC_QUALITY_MARGIN = 0.5
+
+ARABIC_WORD_PATTERN = re.compile(r"[\u0600-\u06ff]+")
+
+# Diacritics and tatweel are not letters and would distort the
+# average, so they are removed before measuring.
+ARABIC_DIACRITIC_PATTERN = re.compile(r"[\u064b-\u0652\u0670\u0640]")
+
+
+def average_arabic_word_length(text: str) -> float | None:
+    """
+    Return the mean length of the Arabic words in the text, or None
+    if there are too few of them to judge reliably.
+    """
+
+    words = ARABIC_WORD_PATTERN.findall(
+        ARABIC_DIACRITIC_PATTERN.sub("", text)
+    )
+
+    if len(words) < MIN_ARABIC_WORDS_FOR_QUALITY:
+        return None
+
+    return sum(len(word) for word in words) / len(words)
+
+
+def ocr_lost_the_arabic(extracted_text: str, ocr_text: str) -> bool:
+    """
+    Decide whether OCR read an Arabic page worse than normal
+    extraction did, so its result can be refused however much more
+    text it appears to contain.
+    """
+
+    if not ARABIC_CHARACTER_PATTERN.search(extracted_text):
+        # Not an Arabic page, or a scanned one where normal
+        # extraction found nothing at all. Either way this check
+        # does not apply and OCR is judged by the rules below.
+        return False
+
+    if not ARABIC_CHARACTER_PATTERN.search(ocr_text):
+        # OCR read an Arabic page as pictures and Latin noise -
+        # pages 7 and 9 of the textbook, where it returned
+        # "Vi ENVY) ENVY NY" for a decorated title page.
+        return True
+
+    extracted_quality = average_arabic_word_length(extracted_text)
+    ocr_quality = average_arabic_word_length(ocr_text)
+
+    if extracted_quality is None or ocr_quality is None:
+        return False
+
+    return ocr_quality < extracted_quality - ARABIC_QUALITY_MARGIN
+#--------------mod end
 # =========================================================
 # EXTRACT BEST AVAILABLE TEXT FOR A PAGE
 # =========================================================
@@ -468,13 +610,32 @@ def extract_page_text(page) -> str:
     character count enough for the length-based check alone
     to catch it.
     """
+#(extract mod2)
+    # Repair what can be repaired BEFORE the two candidates are
+    # compared, so the quality checks below judge damage that is
+    # still there rather than damage already undone. Applied to
+    # both candidates so the comparison stays symmetric.
 
-    extracted_text = extract_text_in_reading_order(page)
+    extracted_text = repair_broken_encoding(
+        extract_text_in_reading_order(page)
+    )
 
     ocr_language = detect_ocr_language(extracted_text)
 
-    ocr_text = extract_text_with_ocr(page, lang=ocr_language)
+    ocr_text = repair_broken_encoding(
+        extract_text_with_ocr(page, lang=ocr_language)
+    )
+#----------mod end
+#(extract mod4)
+    if ocr_lost_the_arabic(extracted_text, ocr_text):
 
+        logger.info(
+            "Page: OCR read the Arabic worse than normal extraction. "
+            "Keeping normal extraction."
+        )
+
+        return extracted_text
+    #-----------mod end
     extracted_length = len(extracted_text.strip())
     ocr_length = len(ocr_text.strip())
 
