@@ -44,8 +44,8 @@ logger = logging.getLogger(__name__)
 
 TOP_K = 5
 # Kept for reference only. Relevance filtering now uses
-# MINIMUM_RERANK_SCORE below; nothing reads this value.
-MINIMUM_SIMILARITY = 0.30
+# MINIMUM_RERANK_SCORE below; nothing reads this value.(delete--)
+#MINIMUM_SIMILARITY = 0.30(delete--)
 
 # Minimum cross-encoder reranker score for a chunk to be treated as
 # relevant. The reranker reads the question and the chunk together,
@@ -527,6 +527,24 @@ def retrieve_relevant_chunks(
         question,
         [chunk.content for chunk in candidate_chunks],
     )
+
+
+    # TEMPORARY diagnostic: every page that reached the reranker and
+    # the score it was given, worst last. Remove once retrieval
+    # quality is settled.
+    logger.info(
+        "Rerank candidates | %s",
+        " | ".join(
+            f"p{chunk.page_number}:{score:+.2f}"
+            for chunk, score in sorted(
+                zip(candidate_chunks, rerank_scores),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+        ),
+    )
+
+
 
     reranked_candidates = sorted(
         zip(candidate_chunk_ids, candidate_chunks, rerank_scores),

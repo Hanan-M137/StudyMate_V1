@@ -3,8 +3,7 @@ import math
 import re
 from functools import lru_cache
 
-from .embedding_service import generate_embedding
-
+from .embedding_service import generate_gate_embedding
 
 # =========================================================
 # LOGGING
@@ -25,9 +24,21 @@ logger = logging.getLogger(__name__)
 # The first check is a rule-based exact match against the
 # patterns below. It never calls a model, so it stays free
 # and instant. Only when that misses does the semantic
-# fallback further down run, which reuses the embedding
-# model the app already loads for retrieval - no new model,
-# no API call.
+# fallback further down run.
+#
+# That fallback deliberately uses its OWN model
+# (GATE_MODEL_NAME in embedding_service.py), not the one
+# retrieval uses. Retrieval only cares which chunk ranks
+# highest, so an absolute score never matters there; this
+# gate is nothing BUT an absolute score against a threshold.
+# multilingual-e5-small, which retrieval now uses, compresses
+# every score into a narrow high band: measured on the gate's
+# own task, its lowest greeting scored 0.9011 and its highest
+# real question 0.8989, a separation of 0.0022. On this
+# model the same measurement gives 0.6288 against 0.5003.
+# Keeping the two apart also means the threshold below no
+# longer breaks whenever the retrieval model changes - which
+# is exactly how it broke.
 
 GREETING_PATTERNS = {
     # English
@@ -150,16 +161,18 @@ TRIVIAL_SIMILARITY_THRESHOLD = 0.58
 # only high greeting scores come from literal word overlap
 # with a reference phrase, not from understanding.
 #
-# This is the same model weakness that rag_service.py already
-# compensates for with hybrid search and reranking. A
-# replacement was measured and does separate the two classes
-# cleanly (paraphrase-multilingual-MiniLM-L12-v2, also 384
-# dimensions, so a drop-in swap), but adopting it requires
-# re-embedding every stored chunk and is a separate, open
-# decision. Until then Arabic messages keep the exact-match
-# behaviour they have always had, while their similarity is
-# still computed and logged below, so calibration data keeps
-# accumulating from real traffic.
+# This is the same model weakness that rag_service.py used to
+# compensate for with hybrid search and reranking. Retrieval
+# has since moved to multilingual-e5-small, which reads Arabic
+# properly; this gate deliberately did not move with it, for
+# the reason given at the top of the file.
+#
+# e5 was measured on this gate's own task anyway, in case it
+# could unlock Arabic here: it narrows the overlap sharply -
+# 6 of 20 real Arabic questions swallowed instead of 19 - but
+# it does not remove it, so Arabic stays suppressed. The
+# similarity is still computed and logged below, so
+# calibration data keeps accumulating from real traffic.
 APPLY_SEMANTIC_FALLBACK_TO_ARABIC = False
 
 # The reference phrases an incoming message is compared
@@ -229,7 +242,7 @@ def _get_reference_embeddings() -> tuple[tuple[str, tuple[float, ...]], ...]:
     """
 
     return tuple(
-        (phrase, tuple(generate_embedding(phrase)))
+        (phrase, tuple(generate_gate_embedding(phrase)))
         for phrase in TRIVIAL_REFERENCE_PHRASES
     )
 
@@ -322,7 +335,7 @@ def _is_semantically_trivial(normalized: str) -> bool:
         return False
 
     try:
-        message_embedding = generate_embedding(normalized)
+        message_embedding = generate_gate_embedding(normalized)
         reference_embeddings = _get_reference_embeddings()
     except Exception:
         # Never let a gate failure break a real chat request.
