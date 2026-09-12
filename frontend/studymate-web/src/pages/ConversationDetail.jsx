@@ -46,12 +46,15 @@ export default function ConversationDetail() {
         <h1 className="type-title mt-1.5">{conversation.title || 'Conversation'}</h1>
         <p className="type-micro mt-1 text-faint">{formatDate(conversation.createdAt)}</p>
 
+        {/* The conversation id travels in the query string so the chat page can
+            reopen THIS thread rather than starting a new one on the same
+            document, which is what this button used to do. */}
         {conversation.documentId ? (
           <Link
-            to={`/documents/${conversation.documentId}`}
+            to={`/documents/${conversation.documentId}?conversation=${conversation.id}`}
             className="mt-4 inline-flex h-8 items-center rounded-xs border border-line-strong bg-surface px-3 text-[0.8125rem] font-medium text-ink transition-colors hover:bg-sunken"
           >
-            Continue with this document
+            Continue this conversation
           </Link>
         ) : null}
       </header>

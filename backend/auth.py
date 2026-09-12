@@ -72,7 +72,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 # Refresh tokens live much longer than access tokens.
 # They are only ever sent to /auth/refresh, never used
 # to call regular protected endpoints directly.
-REFRESH_TOKEN_EXPIRE_DAYS = 30
+REFRESH_TOKEN_EXPIRE_DAYS = 7 #mod from 30 to 7
 
 
 # =========================================================

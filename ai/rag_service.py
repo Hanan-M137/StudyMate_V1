@@ -43,18 +43,40 @@ logger = logging.getLogger(__name__)
 # =========================================================
 
 TOP_K = 5
-# Kept for reference only. Relevance filtering now uses
-# MINIMUM_RERANK_SCORE below; nothing reads this value.(delete--)
-#MINIMUM_SIMILARITY = 0.30(delete--)
+
 
 # Minimum cross-encoder reranker score for a chunk to be treated as
-# relevant. The reranker reads the question and the chunk together,
-# so its score reflects actual relevance far better than the dense
-# cosine similarity, which was measured to be misleading in both
-# directions: it discarded a correct chunk scoring 0.2867 and kept
-# unrelated chunks scoring above 0.60. A positive score means the
-# model judged the chunk relevant, so 0.0 is the natural cut-off.
-MINIMUM_RERANK_SCORE = 0.0
+# relevant, and therefore also the point at which the document is
+# judged to have no answer and the general-knowledge path runs.
+#
+# The reranker reads the question and the chunk together, so its score
+# reflects actual relevance far better than the dense cosine
+# similarity, which was measured to be misleading in both directions:
+# it discarded a correct chunk scoring 0.2867 and kept unrelated
+# chunks scoring above 0.60.
+#
+# The cut-off itself is measured, not reasoned. 0.0 looked like the
+# natural boundary because a positive score "means relevant", but the
+# scores do not behave that way. Measured over every chunk of both
+# documents, against questions whose answer page is known and
+# questions the document cannot answer at all, by the best score each
+# question reached:
+#
+#                        has an answer      has none
+#     Arabic             +0.59 .. +5.24     -2.74 .. -0.08
+#     English            +1.39 .. +7.42     -6.04 .. -3.51
+#
+# One value separates both languages, so this does not need to be per
+# language. 0.25 sits above the Arabic hard case with margin and well
+# below the lowest real Arabic answer, which is the tighter side. That
+# margin earned itself immediately: "5+5?" asked of the Arabic
+# textbook scored +0.09 - higher than anything in the sample above,
+# and still refused.
+#
+# Do not change this without re-running that measurement. A threshold
+# calibrated on one language's score distribution and applied to
+# another is how this value was wrong before.
+MINIMUM_RERANK_SCORE = 0.25
 
 # Reciprocal Rank Fusion constant used when combining the dense
 # (embedding) ranking with the two lexical (trigram) rankings. A
@@ -398,18 +420,18 @@ def retrieve_relevant_chunks(
     Retrieve the chunks most relevant to the student's question.
 
     Every question, in any language, goes through the same hybrid
-    retrieval path. Dense (embedding) search alone under-performs
-    because the embedding model (all-MiniLM-L6-v2) was not trained
-    specifically for Arabic, and we are not changing that model.
-    To compensate, every question also runs a lexical
-    (character-trigram) search against the chunk text using
-    PostgreSQL's pg_trgm extension, and the dense ranking and the
-    two trigram rankings are combined using Reciprocal Rank Fusion
-    (RRF). The top RERANK_CANDIDATE_COUNT chunks from that combined
-    ranking are then rescored by a multilingual cross-encoder
-    reranking model, which is more accurate than RRF but too slow
-    to run on the whole document, and the final top_k chunks are
-    picked from the reranked results.
+    retrieval path. Dense (embedding) search alone is not enough:
+    the retrieval model is multilingual-e5-small, which reads Arabic
+    properly, but it places nearly every score between 0.77 and
+    0.88, so its ranking carries little margin. To compensate, every
+    question also runs a lexical (character-trigram) search against
+    the chunk text using PostgreSQL's pg_trgm extension, and the
+    dense ranking and the two trigram rankings are combined using
+    Reciprocal Rank Fusion (RRF). The top RERANK_CANDIDATE_COUNT
+    chunks from that combined ranking are then rescored by a
+    multilingual cross-encoder reranking model, which is more
+    accurate than RRF but too slow to run on the whole document, and
+    the final top_k chunks are picked from the reranked results.
     """
 
     if not question or not question.strip():
@@ -529,23 +551,6 @@ def retrieve_relevant_chunks(
     )
 
 
-    # TEMPORARY diagnostic: every page that reached the reranker and
-    # the score it was given, worst last. Remove once retrieval
-    # quality is settled.
-    logger.info(
-        "Rerank candidates | %s",
-        " | ".join(
-            f"p{chunk.page_number}:{score:+.2f}"
-            for chunk, score in sorted(
-                zip(candidate_chunks, rerank_scores),
-                key=lambda item: item[1],
-                reverse=True,
-            )
-        ),
-    )
-
-
-
     reranked_candidates = sorted(
         zip(candidate_chunk_ids, candidate_chunks, rerank_scores),
         key=lambda item: item[2],
@@ -567,11 +572,11 @@ def retrieve_relevant_chunks(
                 content=chunk.content,
                 page_number=chunk.page_number,
                 # Reported similarity stays the dense/embedding
-                # similarity (0.0 if the chunk had no embedding).
-                # It no longer drives any filtering decision; it is
-                # kept because it is returned to the frontend and
-                # shown to the student as the match percentage on
-                # each cited source.
+                # similarity (0.0 if the chunk had no embedding). It
+                # drives no filtering decision and is no longer shown
+                # to the student: e5 scores nearly everything between
+                # 0.77 and 0.88, so the number looked meaningful and
+                # was not. It is still returned in the API response.
                 similarity=dense_similarity,
                 rerank_score=rerank_score,
             )
@@ -1075,7 +1080,97 @@ def generate_general_answer_with_claude(
 
     return answer
 
+#تعديل الحركات
+# Pages Claude names in its own answer, used to show the student only
+# the sources the answer actually drew on.
+CITATION_PATTERN = re.compile(r"\[Page (\d+)\]", re.IGNORECASE)
 
+
+def select_chunks_for_answer(
+    chunks: list[RetrievedChunk],
+) -> list[RetrievedChunk]:
+    """
+    Decide whether the retrieved chunks answer the question at all.
+
+    MINIMUM_RERANK_SCORE is applied to the BEST chunk, not to each one
+    separately, because those are two different decisions.
+
+    Whether the document contains an answer is a property of the whole
+    result, and the measured threshold answers it well. Which chunks
+    Claude should read is a question of ORDER, and the reranker has
+    already answered it - the list arrives sorted. Filtering that
+    sorted list by the same number discards correct context whenever
+    the reranker ranks a chunk highly but scores it below the cut-off,
+    which it does on Arabic: the page reading "اللبؤة: أنثى الأسد"
+    scores -1.06 while a page that merely mentions hunting tops the
+    list at +0.59.
+
+    Measured by asking Claude the same questions under both rules:
+    the lioness question went from "the text does not explain its
+    meaning" to "أنثى الأسد [Page 94]"; the passive-voice answer
+    gained two correct rules it had been missing; and on a question
+    where three extra chunks were irrelevant, Claude ignored all
+    three and answered identically. No answer became less correct.
+    The cost is length: answers can wander onto neighbouring material,
+    which is visible in the English frame-buffer answer.
+    """
+
+    scores = [
+        chunk.rerank_score
+        for chunk in chunks
+        if chunk.rerank_score is not None
+    ]
+
+    if not scores or max(scores) < MINIMUM_RERANK_SCORE:
+        return []
+
+    return chunks
+
+
+def build_sources(
+    answer: str,
+    chunks: list[RetrievedChunk],
+) -> list[dict]:
+    """
+    Show the student only the pages the answer actually used.
+
+    Claude now reads every chunk the reranker returned, so displaying
+    all of them would put a confident-looking citation beside pages the
+    answer never touched - five sources for the lioness question, of
+    which it used one. The answer names its pages as [Page N], so those
+    are the ones shown. When it names none, the chunks that clear the
+    threshold on their own are shown instead.
+    """
+
+    cited_pages = {
+        int(page)
+        for page in CITATION_PATTERN.findall(answer)
+    }
+
+    if cited_pages:
+        selected = [
+            chunk
+            for chunk in chunks
+            if chunk.page_number in cited_pages
+        ]
+    else:
+        selected = [
+            chunk
+            for chunk in chunks
+            if chunk.rerank_score is not None
+            and chunk.rerank_score >= MINIMUM_RERANK_SCORE
+        ]
+
+    return [
+        {
+            "chunk_id": str(chunk.id),
+            "page_number": chunk.page_number,
+            "content": chunk.content,
+            "similarity": round(chunk.similarity, 4),
+        }
+        for chunk in selected
+    ]
+#----------------the end
 # =========================================================
 # COMPLETE RAG PIPELINE
 # =========================================================
@@ -1091,8 +1186,8 @@ def answer_question(
 
     1. Check document readiness
     2. Check the input gate for trivial small talk
-    3. Retrieve relevant chunks and filter them by
-       MINIMUM_RERANK_SCORE
+    3. Retrieve relevant chunks, and decide from the BEST reranker
+       score whether the document answers the question at all
     4. If nothing survived and there is conversation history,
        rewrite the question into a standalone one and retrieve
        again with it
@@ -1167,13 +1262,9 @@ def answer_question(
         document_id=document_id,
         question=question,
     )
-
-    relevant_chunks = [
-        chunk
-        for chunk in chunks
-        if chunk.rerank_score is not None
-        and chunk.rerank_score >= MINIMUM_RERANK_SCORE
-    ]
+#تعديل الحركات 2
+    relevant_chunks = select_chunks_for_answer(chunks)
+#the end
     used_rewrite = False
 
     # -----------------------------------------------------
@@ -1208,14 +1299,9 @@ def answer_question(
                 document_id=document_id,
                 question=rewritten_question,
             )
-
-            relevant_chunks = [
-                chunk
-                for chunk in chunks
-                if chunk.rerank_score is not None
-                and chunk.rerank_score >= MINIMUM_RERANK_SCORE
-            ]
-
+#تعديل الحركات 3
+            relevant_chunks = select_chunks_for_answer(chunks)
+#the end
             if relevant_chunks:
                 used_rewrite = True
                 logger.info(
@@ -1262,20 +1348,9 @@ def answer_question(
     # -----------------------------------------------------
     # Build sources
     # -----------------------------------------------------
-
-    sources = [
-        {
-            "chunk_id": str(chunk.id),
-            "page_number": chunk.page_number,
-            "content": chunk.content,
-            "similarity": round(
-                chunk.similarity,
-                4,
-            ),
-        }
-        for chunk in relevant_chunks
-    ]
-
+#تعديل الحركات 4 
+    sources = build_sources(answer, relevant_chunks)
+#the end
     # -----------------------------------------------------
     # Return final RAG response
     # -----------------------------------------------------

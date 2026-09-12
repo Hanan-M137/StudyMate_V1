@@ -107,7 +107,7 @@ app.add_middleware(
 
 # Number of previous messages that will be sent to Claude
 # as conversation history.
-CHAT_HISTORY_LIMIT = 200
+CHAT_HISTORY_LIMIT = 50
 
 
 # =========================================================
@@ -528,13 +528,6 @@ def get_document(
 
     return document
 
-    if not document:
-        raise HTTPException(
-            status_code=404,
-            detail="Document not found",
-        )
-
-    return document
 
 
 # =========================================================

@@ -65,6 +65,12 @@ export function AuthProvider({ children }) {
     setFullName(payload.fullName || null)
     return result
   }, [])
+   /* Sign-out is client-side only, and deliberately so: the backend issues
+     stateless JWTs with no server-side record, so there is nothing to revoke
+     and no /auth/logout endpoint to call. The consequence is that a refresh
+     token copied off this device stays usable until it expires. Real
+     revocation would need the refresh tokens stored and checked on every
+     /auth/refresh. */
 
   const logout = useCallback(() => {
     clearTokens()

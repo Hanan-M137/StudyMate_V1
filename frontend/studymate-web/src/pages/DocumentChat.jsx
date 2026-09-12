@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { getDocument, isPending, isReady } from '../api/documents'
+import { getConversation } from '../api/conversations'
 import { sendChatMessage } from '../api/chat'
 import { getErrorMessage } from '../lib/errors'
 import SourceList from '../components/SourceList'
@@ -32,12 +33,19 @@ function prefersReducedMotion() {
 export default function DocumentChat() {
   const { id: documentId } = useParams()
 
+  /* A ?conversation= parameter means an existing thread is being reopened from
+     the conversations list. Without it this page starts a new thread, which is
+     what it always did. */
+  const [searchParams, setSearchParams] = useSearchParams()
+  const resumeId = searchParams.get('conversation')
+
   const [doc, setDoc] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
 
   /* The first message omits conversation_id; the server returns one and every
-     following message in this thread reuses it.
+     following message in this thread reuses it. When a thread is resumed the
+     id comes from the URL instead, and its stored messages are loaded below.
 
      IMPORTANT: the backend rejects a conversation_id belonging to a different
      document with 404, so this state must be cleared whenever documentId
@@ -47,17 +55,62 @@ export default function DocumentChat() {
   const [messages, setMessages] = useState([])
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+  const [resuming, setResuming] = useState(false)
   const [sendError, setSendError] = useState(null)
 
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
 
+  /* Resetting on documentId alone is not enough. React Router keeps this
+     component mounted across navigations, so the thread being resumed has to
+     be part of the dependency list too, or arriving from a conversation link
+     would clear the very state this effect is meant to fill.
+
+     `cancelled` guards the async load: navigating again while a conversation
+     is still loading must not let the stale response overwrite the new one. */
   useEffect(() => {
+    let cancelled = false
+
     setConversationId(null)
     setMessages([])
     setDraft('')
     setSendError(null)
-  }, [documentId])
+
+    if (!resumeId) return undefined
+
+    setResuming(true)
+
+    getConversation(resumeId)
+      .then((conversation) => {
+        if (cancelled) return
+
+        // A thread belongs to exactly one document and the backend answers 404
+        // when the two disagree, so the mismatch is caught here rather than
+        // sent and failed.
+        if (
+          conversation.documentId &&
+          String(conversation.documentId) !== String(documentId)
+        ) {
+          setSendError('That conversation belongs to a different document.')
+          return
+        }
+
+        setConversationId(conversation.id)
+        setMessages(conversation.messages)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setSendError(getErrorMessage(err, 'Could not load that conversation.'))
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setResuming(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [documentId, resumeId])
 
   const load = useCallback(async () => {
     setLoadError(null)
@@ -98,7 +151,7 @@ export default function DocumentChat() {
 
   async function send(text) {
     const message = text.trim()
-    if (!message || sending) return
+    if (!message || sending || resuming) return
 
     setSendError(null)
     setSending(true)
@@ -134,6 +187,8 @@ export default function DocumentChat() {
     setConversationId(null)
     setMessages([])
     setSendError(null)
+    // Leave the resumed thread behind, or a page refresh would reopen it.
+    if (resumeId) setSearchParams({}, { replace: true })
     inputRef.current?.focus()
   }
 
@@ -179,7 +234,9 @@ export default function DocumentChat() {
       ) : null}
 
       <div className="flex-1">
-        {messages.length === 0 ? (
+        {resuming ? (
+          <LoadingState label="Loading conversation" rows={2} />
+        ) : messages.length === 0 ? (
           <EmptyState
             icon={<ChatIcon className="h-5 w-5" />}
             title="Ask your first question"
@@ -232,11 +289,15 @@ export default function DocumentChat() {
           id="chat-input"
           ref={inputRef}
           value={draft}
-          disabled={!ready || sending}
+          disabled={!ready || sending || resuming}
           placeholder={ready ? 'Ask about this document...' : 'Waiting for processing...'}
           onChange={(event) => setDraft(event.target.value)}
         />
-        <Button type="submit" disabled={!ready || sending || !draft.trim()} loading={sending}>
+        <Button
+          type="submit"
+          disabled={!ready || sending || resuming || !draft.trim()}
+          loading={sending}
+        >
           Send
         </Button>
       </form>
@@ -246,13 +307,6 @@ export default function DocumentChat() {
 
 export function MessageBubble({ message }) {
   const isUser = message.role === 'user'
-
-  /* The backend answers with this exact sentence and an empty sources array
-     when vector search returns nothing above its similarity threshold. */
-  const noMatch =
-    !isUser &&
-    (message.sources?.length ?? 0) === 0 &&
-    /could not find this information/i.test(message.content || '')
 
   if (isUser) {
     return (
@@ -276,13 +330,6 @@ export function MessageBubble({ message }) {
         <p className="type-body whitespace-pre-line text-ink">
           {message.content || <em className="text-muted">(empty answer)</em>}
         </p>
-
-        {noMatch ? (
-          <p className="type-small mt-3 rounded-xs bg-pending-soft px-3 py-2 text-pending">
-            No passage scored above the backend&apos;s similarity threshold, so nothing was sent to
-            the model. Try a longer, more specific question using wording from the document.
-          </p>
-        ) : null}
 
         <SourceList sources={message.sources} />
       </Card>

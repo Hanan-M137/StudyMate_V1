@@ -9,6 +9,13 @@ import { cx } from './ui'
  * than disappearing.
  *
  * Presented as collapsible citations so the thread stays readable.
+ *
+ * `similarity` is deliberately NOT shown. The retrieval model is
+ * multilingual-e5-small, which places almost every score between 0.77 and
+ * 0.88: measured on a real question, the page that answered it scored 0.85 and
+ * a page with nothing to do with it scored 0.85 as well. The number looked
+ * informative and was not, which is worse than leaving it out. The page number
+ * and the passage itself are shown instead, and both are true.
  */
 export default function SourceList({ sources }) {
   const [openIndex, setOpenIndex] = useState(null)
@@ -46,11 +53,6 @@ export default function SourceList({ sources }) {
                 <span className="type-micro font-semibold text-ink-soft">
                   {parsed.page != null ? `Page ${parsed.page}` : `Source ${index + 1}`}
                 </span>
-                {parsed.score != null ? (
-                  <span className="type-micro ml-auto tabular-nums text-faint">
-                    {parsed.score.toFixed(2)} match
-                  </span>
-                ) : null}
               </button>
 
               {open ? (
@@ -73,24 +75,22 @@ export default function SourceList({ sources }) {
 }
 
 function parseSource(source) {
-  if (source == null) return { text: null, page: null, score: null, fallback: '(empty source)' }
+  if (source == null) return { text: null, page: null, fallback: '(empty source)' }
 
   if (typeof source === 'string' || typeof source === 'number') {
-    return { text: String(source), page: null, score: null, key: null }
+    return { text: String(source), page: null, key: null }
   }
 
   if (typeof source === 'object') {
     const text = source.content ?? source.text ?? source.chunk ?? source.snippet ?? null
     const page = source.page_number ?? source.page ?? source.pageNumber ?? null
-    const rawScore = source.similarity ?? source.score ?? null
     return {
       key: source.chunk_id ?? null,
       text: text != null ? String(text) : null,
       page,
-      score: typeof rawScore === 'number' ? rawScore : null,
       fallback: JSON.stringify(source, null, 2),
     }
   }
 
-  return { text: String(source), page: null, score: null }
+  return { text: String(source), page: null }
 }

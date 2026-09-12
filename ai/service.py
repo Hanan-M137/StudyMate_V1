@@ -469,6 +469,26 @@ def suspicious_character_ratio(text: str) -> float | None:
 # three appears in varied company - before a hamza, before
 # ل ت ب ن س, and at the end of a word - which is what identifies
 # it as a letter rather than an artifact of a ligature.
+
+# A second broken encoding in this book was measured and left alone.
+# Ten pages carry Quranic verses whose characters land in the Arabic
+# Presentation Forms blocks - "﴿ﮊ ﮋ ﮌ ﮍ ﮎﮏ" - so they display
+# correctly and match nothing a student types.
+#
+# NFKC normalization, the usual fix, was tested and rejected: it turns
+# them into Persian and Urdu letters (ژ ڑ ک گ ڳ), replacing text that
+# is obviously foreign with text that looks Arabic and would pollute
+# trigram matching with false hits.
+
+# A repair table cannot work either. The code points run consecutively
+# (U+FB8A, U+FB8B, U+FB8C...), which is a font's glyph ids written out
+# as characters: the same code point means a different letter in each
+# verse, because each verse carries its own glyph subset. Hence 174
+# distinct characters at three occurrences each, against 752, 798 and
+# 213 for the three characters repaired below, whose mapping was
+# constant. Only reading each verse's embedded font map could recover
+# it, for 1.5% of one book's words.
+
 SUBSTITUTED_CHARACTERS = {
     "\u020c": "ا",   # Ȍ  LATIN CAPITAL LETTER O WITH DOUBLE GRAVE
     "\u0499": "ا",   # ҙ  CYRILLIC SMALL LETTER ZE WITH DESCENDER
