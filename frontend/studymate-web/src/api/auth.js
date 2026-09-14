@@ -38,3 +38,19 @@ export async function refresh(refreshToken) {
   })
   return data
 }
+
+/**
+ * POST /auth/logout - revokes every token this account holds.
+ *
+ * Uses `client`, so it carries the access token: the server needs to know
+ * whose tokens to revoke. That also means it fails when the session has
+ * already expired, which is why the caller clears the stored tokens whether
+ * this succeeds or not - signing out locally must never depend on the
+ * network.
+ *
+ * Revocation is account-wide, not per device: it signs out the phone as
+ * well as the laptop.
+ */
+export async function logout() {
+  await client.post('/auth/logout')
+}

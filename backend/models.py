@@ -53,6 +53,17 @@ class User(Base):
         server_default=func.now(),
     )
 
+    # Every token carries the value this had when it was issued.
+    # Signing out increases it, so every token minted before that
+    # moment stops being accepted - on this device and on every
+    # other one. See get_current_user in backend/auth.py.
+    token_version = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+
     # Relationships
     documents = relationship(
         "Document",
@@ -266,6 +277,8 @@ class Conversation(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+
 
     # Relationships
     user = relationship(

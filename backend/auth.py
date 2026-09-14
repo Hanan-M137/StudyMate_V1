@@ -163,10 +163,15 @@ def create_refresh_token(data: dict) -> str:
 # DECODE / VALIDATE REFRESH TOKEN
 # =========================================================
 
-def decode_refresh_token(token: str) -> str:
+def decode_refresh_token(token: str) -> tuple[str, int]:
     """
-    Validate a refresh token and return the user id
-    stored in it ("sub").
+    Validate a refresh token and return the user id stored in
+    it ("sub") together with the token version it was issued
+    with ("ver").
+
+    The version is returned rather than checked here because
+    checking it needs the user row, which this function has no
+    database session for. The caller compares the two.
 
     Raises HTTPException(401) if the token is invalid,
     expired, or not actually a refresh token.
@@ -195,7 +200,18 @@ def decode_refresh_token(token: str) -> str:
     if user_id is None:
         raise invalid_token_exception
 
-    return user_id
+    # Tokens minted before token_version existed carry no "ver"
+    # and are treated as version 0, which is what every existing
+    # user row starts at - so adding this feature does not sign
+    # anyone out.
+    token_version = payload.get("ver", 0)
+
+    try:
+        token_version = int(token_version)
+    except (TypeError, ValueError):
+        raise invalid_token_exception
+
+    return user_id, token_version
 
 
 # =========================================================
@@ -235,6 +251,10 @@ def get_current_user(
         if user_id is None:
             raise credentials_exception
 
+        # Missing "ver" means a token issued before this feature
+        # existed; every user row starts at 0, so it still passes.
+        token_version = payload.get("ver", 0)
+
     except jwt.InvalidTokenError:
         raise credentials_exception
 
@@ -245,6 +265,12 @@ def get_current_user(
     )
 
     if user is None:
+        raise credentials_exception
+
+    # This is what makes signing out real. The token is
+    # cryptographically valid and unexpired, but it was issued
+    # before the user signed out, so it is refused.
+    if token_version != user.token_version:
         raise credentials_exception
 
     return user

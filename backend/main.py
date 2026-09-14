@@ -319,13 +319,15 @@ def login(
 
     access_token = create_access_token(
         data={
-            "sub": str(user.id)
+            "sub": str(user.id),
+            "ver": user.token_version,
         }
     )
 
     refresh_token = create_refresh_token(
         data={
-            "sub": str(user.id)
+            "sub": str(user.id),
+            "ver": user.token_version,
         }
     )
 
@@ -352,7 +354,7 @@ def refresh_access_token(
     (and a new refresh token, rotated for extra safety).
     """
 
-    user_id = decode_refresh_token(
+    user_id, token_version = decode_refresh_token(
         request_data.refresh_token
     )
 
@@ -368,18 +370,73 @@ def refresh_access_token(
             detail="User not found",
         )
 
+    # A refresh token issued before the user signed out is
+    # refused here too, otherwise signing out would only close
+    # the door the access token walks through.
+    if token_version != user.token_version:
+
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired refresh token",
+        )
+
     new_access_token = create_access_token(
-        data={"sub": str(user.id)}
+        data={
+            "sub": str(user.id),
+            "ver": user.token_version,
+        }
     )
 
     new_refresh_token = create_refresh_token(
-        data={"sub": str(user.id)}
+        data={
+            "sub": str(user.id),
+            "ver": user.token_version,
+        }
     )
 
     return {
         "access_token": new_access_token,
         "refresh_token": new_refresh_token,
         "token_type": "bearer",
+    }
+
+# =========================================================
+# LOGOUT
+# =========================================================
+
+@app.post(
+    "/auth/logout"
+)
+def logout(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Sign out everywhere.
+
+    A JWT cannot be taken back once handed out: it is valid
+    because it is correctly signed and not yet expired, and the
+    server keeps no record of it to delete. Clearing it from the
+    browser hides it, but a copy taken beforehand would keep
+    working until it expired on its own.
+
+    Raising token_version is what actually revokes it. Every
+    token carries the version it was issued with, and
+    get_current_user refuses any token whose version no longer
+    matches the user's - so one write here kills every token
+    this user holds, on every device, immediately.
+
+    That breadth is the honest cost of the simplest design: it
+    signs out the phone as well as the laptop. Per-device
+    revocation would need a stored id per token.
+    """
+
+    current_user.token_version += 1
+
+    db.commit()
+
+    return {
+        "message": "Signed out successfully"
     }
 
 

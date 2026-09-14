@@ -65,20 +65,35 @@ export function AuthProvider({ children }) {
     setFullName(payload.fullName || null)
     return result
   }, [])
-   /* Sign-out is client-side only, and deliberately so: the backend issues
-     stateless JWTs with no server-side record, so there is nothing to revoke
-     and no /auth/logout endpoint to call. The consequence is that a refresh
-     token copied off this device stays usable until it expires. Real
-     revocation would need the refresh tokens stored and checked on every
-     /auth/refresh. */
 
-  const logout = useCallback(() => {
-    clearTokens()
-    writeStored(EMAIL_KEY, null)
-    writeStored(NAME_KEY, null)
-    setEmail(null)
-    setFullName(null)
-    setIsAuthenticated(false)
+  /* Sign-out revokes on the server as well as clearing this device.
+     /auth/logout raises the account's token_version, and every token carries
+     the version it was issued with, so every access and refresh token this
+     account holds stops being accepted at once - verified by hand: the same
+     token listed the documents, then returned 401 after this call.
+
+     The revocation is account-wide, so it signs out the phone along with the
+     laptop. Per-device revocation would need an id stored per token.
+
+     The call comes first, because clearing the tokens would leave nothing to
+     authenticate it with - and the clearing happens in `finally`, because a
+     failed request (an expired session, the server down) must never trap
+     someone inside the app. */
+
+  const logout = useCallback(async () => {
+    try {
+      await authApi.logout()
+    } catch {
+      /* Already expired, or the server is unreachable. Either way the local
+         sign-out below still happens. */
+    } finally {
+      clearTokens()
+      writeStored(EMAIL_KEY, null)
+      writeStored(NAME_KEY, null)
+      setEmail(null)
+      setFullName(null)
+      setIsAuthenticated(false)
+    }
   }, [])
 
   const value = useMemo(
