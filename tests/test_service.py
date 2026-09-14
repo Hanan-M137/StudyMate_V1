@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+import pytesseract
 from anthropic import (
     APIConnectionError,
     APIStatusError,
@@ -445,6 +446,19 @@ def test_extract_pdf_chunks_raises_file_not_found_for_missing_file():
 # =========================================================
 # TEST extract_page_text (mocked collaborators)
 # =========================================================
+
+def test_extract_text_with_ocr_returns_empty_string_when_tesseract_missing():
+    fake_page = MagicMock()
+    fake_page.get_pixmap.return_value.tobytes.return_value = b"fake-image-bytes"
+
+    with patch(
+        "ai.service.pytesseract.image_to_string",
+        side_effect=pytesseract.TesseractNotFoundError(),
+    ):
+        result = extract_text_with_ocr(fake_page, lang="eng")
+
+    assert result == ""
+
 
 def test_extract_page_text_switches_to_ocr_when_meaningfully_longer():
     with patch(

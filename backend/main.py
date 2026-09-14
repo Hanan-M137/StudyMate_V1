@@ -2,6 +2,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+logger = logging.getLogger(__name__)
 import os
 import shutil
 from uuid import UUID, uuid4
@@ -855,11 +856,16 @@ def chat(
 
     except Exception as error:
 
+        logger.exception(
+            "Unhandled exception in /chat for document %s.",
+            document.id,
+        )
+
         raise HTTPException(
             status_code=500,
             detail=(
                 "An error occurred while processing "
-                "the AI request."
+                f"the AI request: {error}"
             ),
         ) from error
 

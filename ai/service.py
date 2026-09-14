@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import shutil
 from pathlib import Path
 from uuid import UUID
 
@@ -14,6 +15,8 @@ from anthropic import (
 
 from dotenv import load_dotenv
 
+load_dotenv()
+
 #from pypdf import PdfReader
 import io
 import fitz  # PyMuPDF
@@ -21,9 +24,10 @@ import pytesseract
 from PIL import Image
 from spellchecker import SpellChecker
 
-pytesseract.pytesseract.tesseract_cmd = (
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-)
+TESSERACT_CMD = os.environ.get("TESSERACT_CMD") or shutil.which("tesseract")
+
+if TESSERACT_CMD:
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
 from sqlalchemy.orm import Session
 
@@ -38,13 +42,6 @@ from backend.models import (
 
 from .anthropic_client import get_anthropic_client
 from .embedding_service import generate_embeddings
-
-
-# =========================================================
-# LOAD ENVIRONMENT VARIABLES
-# =========================================================
-
-load_dotenv()
 
 
 # =========================================================
@@ -346,7 +343,15 @@ def extract_text_with_ocr(page, lang: str = "eng") -> str:
         io.BytesIO(pixmap.tobytes("png"))
     )
 
-    return pytesseract.image_to_string(image, lang=lang)
+    try:
+        return pytesseract.image_to_string(image, lang=lang)
+    except pytesseract.pytesseract.TesseractNotFoundError:
+        logger.warning(
+            "Tesseract OCR is not installed or not in PATH. "
+            "OCR fallback was skipped for this page. "
+            "Set TESSERACT_CMD in your environment to enable it."
+        )
+        return ""
 
 
 # =========================================================

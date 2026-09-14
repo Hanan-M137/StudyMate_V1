@@ -100,10 +100,13 @@ def init_db():
         QuizAttempt,
     )
 
-    # Enable pgvector extension.
+    # Enable required PostgreSQL extensions.
     with engine.begin() as connection:
         connection.execute(
             text("CREATE EXTENSION IF NOT EXISTS vector")
+        )
+        connection.execute(
+            text("CREATE EXTENSION IF NOT EXISTS pg_trgm")
         )
 
     # Create all tables.
