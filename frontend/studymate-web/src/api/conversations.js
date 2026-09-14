@@ -73,3 +73,8 @@ export async function getConversation(conversationId) {
     messages: rawMessages.map(normaliseMessage).filter(Boolean),
   }
 }
+
+/** DELETE /conversations/{conversation_id} - also removes its messages. */
+export async function deleteConversation(conversationId) {
+  await client.delete(`/conversations/${conversationId}`)
+}

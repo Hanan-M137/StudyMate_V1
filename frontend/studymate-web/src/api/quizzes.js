@@ -24,12 +24,20 @@ import client from './client'
  *        "short_answer"    -> options = null  (free-text answer)
  *   -> correct_answer and explanation are correctly absent before submission.
  *
- * POST /quizzes/{quiz_id}/attempts
- *   request:  { answers: { "<question_id>": "A", ... } }
+ * POST /quizzes/{quiz_id}/attempts *   request:  { answers: { "<question_id>": "A", ... } }
  *   response: { message, attempt_id, score, total_questions, percentage,
- *               correct_answers, wrong_answers,
- *               results: [ { question_id, student_answer, correct } ] }
- *   -> results carry no correct_answer/explanation, only right/wrong.
+ *               correct_answers, partial_answers, wrong_answers,
+ *               results: [ { question_id, student_answer, correct, verdict,
+ *                            reason, correct_answer, explanation } ] }
+ *   -> verdict is "correct" | "partial" | "incorrect". Short answers are
+ *      judged by the model on meaning rather than compared as strings, so
+ *      `reason` explains the mark to the student. It is empty for multiple
+ *      choice and true/false, which are still compared as strings.
+ *   -> a partial answer earns the mark, so `correct` is true for it and
+ *      anything reading only `correct` keeps working.
+ *   -> correct_answer and explanation appear ONLY here, after submitting.
+ *      GET /quizzes/{quiz_id} still omits both, so they are not readable
+ *      before the student answers.
  */
 
 export const QUESTION_TYPES = {
@@ -102,6 +110,35 @@ export async function createQuiz({ documentId, title, numQuestions }) {
   }
 }
 
+/**
+ * GET /quizzes -> { quizzes: [ { id, title, document_id, document_title,
+ *                               questions_count, attempts_count,
+ *                               created_at } ] }
+ *
+ * Newest first, from the database. This replaced a list kept in the
+ * browser's local storage, which was lost on any other device.
+ */
+export async function listQuizzes() {
+  const { data } = await client.get('/quizzes')
+  const rows = Array.isArray(data?.quizzes) ? data.quizzes : []
+
+  return rows.map((row) => ({
+    id: String(row?.id ?? ''),
+    title: row?.title || 'Untitled quiz',
+    documentId: row?.document_id ?? null,
+    documentTitle: row?.document_title ?? null,
+    questionsCount: numberOrNull(row?.questions_count),
+    attemptsCount: numberOrNull(row?.attempts_count),
+    createdAt: row?.created_at ?? null,
+  }))
+}
+
+/** DELETE /quizzes/{quiz_id} - also removes its questions and attempts. */
+export async function deleteQuiz(quizId) {
+  await client.delete(`/quizzes/${quizId}`)
+}
+
+
 export async function getQuiz(quizId) {
   const { data } = await client.get(`/quizzes/${quizId}`)
   const meta = data?.quiz ?? {}
@@ -129,6 +166,7 @@ export async function submitQuizAttempt(quizId, answers) {
     totalQuestions: numberOrNull(data?.total_questions),
     percentage: numberOrNull(data?.percentage),
     correctCount: numberOrNull(data?.correct_answers),
+    partialCount: numberOrNull(data?.partial_answers),
     wrongCount: numberOrNull(data?.wrong_answers),
     results: Array.isArray(data?.results) ? data.results : [],
     raw: data,

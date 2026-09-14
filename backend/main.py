@@ -25,6 +25,8 @@ from sqlalchemy.orm import Session
 
 from pydantic import BaseModel, EmailStr
 
+from concurrent.futures import ThreadPoolExecutor
+
 from .database import (
     init_db,
     get_db,
@@ -61,6 +63,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from ai.service import (
     process_document_background,
     generate_quiz,
+    grade_short_answer,
 )
 
 from ai.rag_service import answer_question
@@ -951,6 +954,48 @@ def get_conversation(
         "messages": messages,
     }
 
+# =========================================================
+# DELETE CONVERSATION
+# =========================================================
+
+@app.delete(
+    "/conversations/{conversation_id}"
+)
+def delete_conversation(
+    conversation_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Delete a conversation and every message in it.
+
+    Messages are removed through the database cascade,
+    the same way delete_document removes a document's
+    conversations.
+    """
+
+    conversation = (
+        db.query(Conversation)
+        .filter(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not conversation:
+        raise HTTPException(
+            status_code=404,
+            detail="Conversation not found",
+        )
+
+    db.delete(conversation)
+    db.commit()
+
+    return {
+        "message": "Conversation deleted successfully"
+    }
+
 
 # =========================================================
 # CREATE QUIZ
@@ -1094,6 +1139,145 @@ def create_quiz(
         ),
     }
 
+# =========================================================
+# LIST QUIZZES
+# =========================================================
+
+@app.get(
+    "/quizzes"
+)
+def list_quizzes(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Every quiz this user has created, newest first.
+
+    Without this the web app had no way to ask which
+    quizzes exist, so it kept a list in the browser's
+    local storage: lost on another device, on another
+    browser, and whenever site data was cleared - while
+    the quizzes themselves sat in the database,
+    unreachable because nothing listed them.
+
+    Counts are gathered in two extra queries rather than
+    one per quiz.
+    """
+
+    quizzes = (
+        db.query(Quiz)
+        .filter(
+            Quiz.user_id == current_user.id
+        )
+        .order_by(
+            Quiz.created_at.desc()
+        )
+        .all()
+    )
+
+    if not quizzes:
+        return {"quizzes": []}
+
+    quiz_ids = [quiz.id for quiz in quizzes]
+
+    # -----------------------------------------------------
+    # How many questions, how many attempts
+    # -----------------------------------------------------
+
+    question_counts = {}
+
+    for (quiz_id,) in (
+        db.query(QuizQuestion.quiz_id)
+        .filter(
+            QuizQuestion.quiz_id.in_(quiz_ids)
+        )
+        .all()
+    ):
+        question_counts[quiz_id] = (
+            question_counts.get(quiz_id, 0) + 1
+        )
+
+    attempt_counts = {}
+
+    for (quiz_id,) in (
+        db.query(QuizAttempt.quiz_id)
+        .filter(
+            QuizAttempt.quiz_id.in_(quiz_ids)
+        )
+        .all()
+    ):
+        attempt_counts[quiz_id] = (
+            attempt_counts.get(quiz_id, 0) + 1
+        )
+
+    # -----------------------------------------------------
+    # Which document each quiz came from
+    # -----------------------------------------------------
+    #
+    # A quiz can outlive its document, so a missing title
+    # is normal and is returned as null rather than
+    # dropping the quiz from the list.
+
+    document_ids = [
+        quiz.document_id
+        for quiz in quizzes
+        if quiz.document_id is not None
+    ]
+
+    document_titles = {}
+
+    if document_ids:
+
+        for document_id, title in (
+            db.query(
+                Document.id,
+                Document.title,
+            )
+            .filter(
+                Document.id.in_(document_ids)
+            )
+            .all()
+        ):
+            document_titles[document_id] = title
+
+    # -----------------------------------------------------
+    # Return
+    # -----------------------------------------------------
+
+    return {
+        "quizzes": [
+            {
+                "id": str(quiz.id),
+
+                "title": quiz.title,
+
+                "document_id": (
+                    str(quiz.document_id)
+                    if quiz.document_id
+                    else None
+                ),
+
+                "document_title": document_titles.get(
+                    quiz.document_id
+                ),
+
+                "questions_count": question_counts.get(
+                    quiz.id, 0
+                ),
+
+                "attempts_count": attempt_counts.get(
+                    quiz.id, 0
+                ),
+
+                "created_at": (
+                    quiz.created_at.isoformat()
+                    if quiz.created_at
+                    else None
+                ),
+            }
+            for quiz in quizzes
+        ]
+    }
 
 # =========================================================
 # GET QUIZ
@@ -1175,8 +1359,22 @@ def submit_quiz_attempt(
     """
     Submit answers and calculate the final score.
 
-    Student answers are compared directly with
-    the correct answers stored in QuizQuestion.
+    Multiple choice and true/false are compared as
+    strings, which is what they are: one letter, or
+    "true" / "false".
+
+    Short answers are not. The stored correct answers
+    average 16.9 words and only 2 of 24 are three words
+    or shorter, so string comparison marked a student
+    who was right in their own words as wrong. Those are
+    graded by meaning instead, and can come back
+    "partial": one true part of a multi-part answer.
+    A partial answer earns the mark and the student is
+    told what was missing.
+
+    Grading is one small model call per short answer, so
+    the answers are graded concurrently rather than one
+    after another.
     """
 
     # -----------------------------------------------------
@@ -1226,14 +1424,84 @@ def submit_quiz_attempt(
         attempt_data.answers
     )
 
-    score = 0
     total_questions = len(questions)
 
     results = []
 
     # -----------------------------------------------------
+    # Grade the short answers, concurrently
+    # -----------------------------------------------------
+    #
+    # Everything the grader needs is pulled out of the ORM
+    # objects first, so nothing touches the database from
+    # inside a worker thread.
+
+    to_grade = []
+
+    for question in questions:
+
+        if question.question_type != "short_answer":
+            continue
+
+        student_answer = submitted_answers.get(
+            str(question.id)
+        )
+
+        if student_answer is None:
+            continue
+
+        if not str(student_answer).strip():
+            continue
+
+        to_grade.append(
+            (
+                str(question.id),
+                str(question.question_text),
+                str(question.correct_answer),
+                str(student_answer),
+            )
+        )
+
+    grade_by_question_id = {}
+
+    if to_grade:
+
+        with ThreadPoolExecutor(
+            max_workers=min(len(to_grade), 8)
+        ) as pool:
+
+            futures = {
+                pool.submit(
+                    grade_short_answer,
+                    question_text,
+                    correct_answer,
+                    student_answer,
+                ): question_id
+                for (
+                    question_id,
+                    question_text,
+                    correct_answer,
+                    student_answer,
+                ) in to_grade
+            }
+
+            for future in futures:
+
+                question_id = futures[future]
+
+                # grade_short_answer never raises - it falls
+                # back to exact comparison on its own - so a
+                # failure here would be a bug, not an outage.
+                grade_by_question_id[question_id] = (
+                    future.result()
+                )
+
+    # -----------------------------------------------------
     # Compare answers
     # -----------------------------------------------------
+
+    correct_count = 0
+    partial_count = 0
 
     for question in questions:
 
@@ -1245,39 +1513,84 @@ def submit_quiz_attempt(
             question_id
         )
 
-        if student_answer is not None:
+        grade = grade_by_question_id.get(
+            question_id
+        )
 
+        if grade is not None:
+
+            # A short answer that was graded. The student's
+            # own text is kept exactly as they wrote it, so
+            # the review screen shows their sentence rather
+            # than an upper-cased version of it.
             student_answer = str(
                 student_answer
-            ).strip().upper()
+            ).strip()
 
-        correct_answer = (
-            str(
-                question.correct_answer
+            verdict = grade["verdict"]
+            reason = grade["reason"]
+
+        else:
+
+            if student_answer is not None:
+
+                student_answer = str(
+                    student_answer
+                ).strip().upper()
+
+            expected_answer = (
+                str(
+                    question.correct_answer
+                )
+                .strip()
+                .upper()
             )
-            .strip()
-            .upper()
-        )
 
-        is_correct = (
-            student_answer
-            == correct_answer
-        )
+            verdict = (
+                "correct"
+                if student_answer == expected_answer
+                else "incorrect"
+            )
 
-        if is_correct:
-            score += 1
+            reason = ""
+
+        if verdict == "correct":
+            correct_count += 1
+
+        elif verdict == "partial":
+            partial_count += 1
 
         results.append(
             {
                 "question_id": question_id,
                 "student_answer": student_answer,
-                "correct": is_correct,
+
+                # Kept so that anything reading only
+                # `correct` still works. A partial answer
+                # earned the mark, so it is true here.
+                "correct": verdict in {"correct", "partial"},
+
+                "verdict": verdict,
+                "reason": reason,
+
+                # Sent here and nowhere else. GET
+                # /quizzes/{id} deliberately omits these,
+                # so before the student answers there is
+                # nothing to read - not in the page, and
+                # not in the network response behind it.
+                "correct_answer": str(
+                    question.correct_answer
+                ),
+
+                "explanation": question.explanation or "",
             }
         )
 
     # -----------------------------------------------------
     # Calculate percentage
     # -----------------------------------------------------
+
+    score = correct_count + partial_count
 
     percentage = round(
         (score / total_questions) * 100,
@@ -1316,11 +1629,58 @@ def submit_quiz_attempt(
 
         "percentage": percentage,
 
-        "correct_answers": score,
+        "correct_answers": correct_count,
+
+        "partial_answers": partial_count,
 
         "wrong_answers": (
-            total_questions - score
+            total_questions
+            - correct_count
+            - partial_count
         ),
 
         "results": results,
+    }
+
+# =========================================================
+# DELETE QUIZ
+# =========================================================
+
+@app.delete(
+    "/quizzes/{quiz_id}"
+)
+def delete_quiz(
+    quiz_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Delete a quiz, its questions, and every attempt
+    recorded against it.
+
+    The attempts go too, and they are the only record of
+    what the student scored - so this is not undoable and
+    the interface asks before calling it.
+    """
+
+    quiz = (
+        db.query(Quiz)
+        .filter(
+            Quiz.id == quiz_id,
+            Quiz.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not quiz:
+        raise HTTPException(
+            status_code=404,
+            detail="Quiz not found",
+        )
+
+    db.delete(quiz)
+    db.commit()
+
+    return {
+        "message": "Quiz deleted successfully"
     }

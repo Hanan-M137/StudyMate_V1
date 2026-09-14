@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { getQuiz, submitQuizAttempt } from '../api/quizzes'
 import { getErrorMessage } from '../lib/errors'
-import { rememberQuiz } from './Quizzes'
 import { CheckIcon, CloseIcon } from '../components/icons'
 import {
   Badge,
@@ -11,7 +10,6 @@ import {
   EmptyState,
   ErrorState,
   InlineError,
-  Input,
   LoadingState,
   cx,
 } from '../components/ui'
@@ -36,7 +34,6 @@ export default function QuizTake() {
     try {
       const loaded = await getQuiz(quizId)
       setQuiz(loaded)
-      rememberQuiz(loaded)
     } catch (err) {
       setError(getErrorMessage(err, 'Could not load this quiz.'))
     } finally {
@@ -193,7 +190,12 @@ export default function QuizTake() {
 }
 
 function QuestionCard({ index, total, question, value, locked, feedback, onChange }) {
-  const state = feedback ? (feedback.correct ? 'correct' : 'incorrect') : 'neutral'
+  /* Three outcomes, not two: a short answer can be partially right, and the
+     student is told which part they got. `correct` is kept as the fallback so
+     an older response without `verdict` still renders. */
+  const state = feedback
+    ? feedback.verdict || (feedback.correct ? 'correct' : 'incorrect')
+    : 'neutral'
 
   return (
     <Card
@@ -202,6 +204,11 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
       className={cx(
         'px-4 py-4 sm:px-6 sm:py-5',
         state === 'correct' && 'border-accent-line',
+        /* Only accent/danger/neutral tones are known to exist in the design
+           system, so partial borrows the strong neutral border rather than a
+           colour that may not be defined. See the note at the bottom of this
+           file for the one-line upgrade if a warning tone exists. */
+        state === 'partial' && 'border-line-strong',
         state === 'incorrect' && 'border-danger-line',
       )}
     >
@@ -214,7 +221,15 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
           <span className="mr-2 text-faint tabular-nums">{index + 1}.</span>
           {question.text || <em className="text-muted">(no question text returned)</em>}
         </p>
-        <Badge tone={state === 'incorrect' ? 'danger' : state === 'correct' ? 'accent' : 'neutral'}>
+        <Badge
+          tone={
+            state === 'incorrect'
+              ? 'danger'
+              : state === 'correct'
+                ? 'accent'
+                : 'neutral'
+          }
+        >
           {question.typeLabel}
         </Badge>
       </div>
@@ -224,16 +239,21 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
           <label htmlFor={`answer-${question.id}`} className="sr-only">
             Your answer
           </label>
-          <Input
+          {/* A textarea, not a single-line input: the stored correct answers
+              average 16.9 words, so an answer worth writing does not fit on
+              one line. */}
+          <textarea
             id={`answer-${question.id}`}
             value={value}
             disabled={locked}
+            rows={3}
             placeholder="Type your answer"
             onChange={(event) => onChange(event.target.value)}
+            className="w-full rounded-sm border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-faint focus:border-accent focus:outline-none disabled:opacity-70"
           />
           <p className="type-micro mt-1.5 text-faint">
             {question.isKnownType
-              ? 'Compared as plain text, so match the document’s wording (for example 12000, not 12,000).'
+              ? 'Answer in your own words. It is judged on meaning, not on matching the document’s wording.'
               : 'This question type was not recognised, so it accepts a free-text answer.'}
           </p>
         </div>
@@ -241,14 +261,27 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
         <div className="measure space-y-2" role="radiogroup" aria-label={question.text || 'Options'}>
           {question.options.map((option) => {
             const selected = value === option.key
+
+            /* Marked only after submitting: `correct_answer` is absent from
+               GET /quizzes/{id}, so before an answer is given there is nothing
+               here to read, in the page or in its source. */
+            const isCorrectOption =
+              feedback?.correct_answer != null &&
+              String(feedback.correct_answer).trim().toLowerCase() ===
+                option.key.trim().toLowerCase()
+
             return (
               <label
                 key={option.key}
                 className={cx(
                   'flex cursor-pointer items-start gap-3 rounded-sm border px-3.5 py-2.5 transition-colors duration-150',
-                  selected
+                  isCorrectOption
                     ? 'border-accent bg-accent-soft'
-                    : 'border-line bg-surface hover:border-line-strong hover:bg-sunken/60',
+                    : selected && state === 'incorrect'
+                      ? 'border-danger-line bg-danger-soft'
+                      : selected
+                        ? 'border-accent bg-accent-soft'
+                        : 'border-line bg-surface hover:border-line-strong hover:bg-sunken/60',
                   locked && 'cursor-default',
                 )}
               >
@@ -275,6 +308,11 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
                     <span className="mr-2 font-semibold text-muted">{option.key}</span>
                   ) : null}
                   {option.text}
+                  {isCorrectOption ? (
+                    <span className="type-micro ml-2 font-semibold text-accent">
+                      Correct answer
+                    </span>
+                  ) : null}
                 </span>
               </label>
             )
@@ -286,30 +324,60 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
         <p className="type-micro mt-3 text-faint">From page {question.sourcePage}</p>
       ) : null}
 
-      {feedback ? <Feedback feedback={feedback} /> : null}
+      {feedback ? (
+        <Feedback feedback={feedback} isFreeText={question.isFreeText} />
+      ) : null}
     </Card>
   )
 }
 
-/** results entries are { question_id, student_answer, correct }. */
-function Feedback({ feedback }) {
-  const isCorrect = feedback.correct === true
+/**
+ * results entries are { question_id, student_answer, correct, verdict,
+ * reason, correct_answer, explanation }.
+ */
+function Feedback({ feedback, isFreeText }) {
+  const verdict = feedback.verdict || (feedback.correct ? 'correct' : 'incorrect')
+
+  const tone =
+    verdict === 'correct'
+      ? 'bg-accent-soft text-accent'
+      : verdict === 'partial'
+        ? 'bg-sunken text-ink'
+        : 'bg-danger-soft text-danger'
+
+  const label =
+    verdict === 'correct'
+      ? 'Correct'
+      : verdict === 'partial'
+        ? 'Partially correct'
+        : 'Incorrect'
+
   return (
-    <div
-      className={cx(
-        'mt-4 flex items-start gap-2.5 rounded-sm px-3.5 py-2.5',
-        isCorrect ? 'bg-accent-soft text-accent' : 'bg-danger-soft text-danger',
-      )}
-    >
-      {isCorrect ? (
-        <CheckIcon className="mt-0.5 h-4 w-4 shrink-0" />
-      ) : (
+    <div className={cx('mt-4 flex items-start gap-2.5 rounded-sm px-3.5 py-2.5', tone)}>
+      {verdict === 'incorrect' ? (
         <CloseIcon className="mt-0.5 h-4 w-4 shrink-0" />
+      ) : (
+        <CheckIcon className="mt-0.5 h-4 w-4 shrink-0" />
       )}
       <div className="type-small">
-        <p className="font-semibold">{isCorrect ? 'Correct' : 'Incorrect'}</p>
+        <p className="font-semibold">{label}</p>
+        {feedback.reason ? <p className="mt-0.5 opacity-90">{feedback.reason}</p> : null}
         {feedback.student_answer != null ? (
-          <p className="opacity-90">You answered: {String(feedback.student_answer)}</p>
+          <p className="mt-0.5 opacity-75">You answered: {String(feedback.student_answer)}</p>
+        ) : null}
+
+        {/* For a choice question the right option is already marked in the
+            list above, so repeating it here would only be noise. A written
+            answer has nowhere else to show it. */}
+        {isFreeText && feedback.correct_answer ? (
+          <p className="mt-1.5">
+            <span className="font-semibold">Model answer: </span>
+            <span className="opacity-90">{String(feedback.correct_answer)}</span>
+          </p>
+        ) : null}
+
+        {feedback.explanation ? (
+          <p className="mt-1.5 opacity-90">{String(feedback.explanation)}</p>
         ) : null}
       </div>
     </div>
@@ -365,9 +433,14 @@ function ScoreCard({ result, questionCount }) {
           <p className="type-display mt-1">
             {result.score != null && total != null ? `${result.score} of ${total}` : 'Submitted'}
           </p>
+          {/* Partial answers earn the mark, so they are named here as well as
+              on the question: otherwise a student reading only the score sees
+              full credit for an answer that was half of one. */}
           <p className="type-small mt-1.5 text-muted">
             {result.correctCount != null
               ? `${result.correctCount} correct${
+                  result.partialCount ? `, ${result.partialCount} partially correct` : ''
+                }${
                   result.wrongCount != null ? `, ${result.wrongCount} incorrect` : ''
                 }. Per-question results are marked below.`
               : 'Scored by the server. Per-question results are marked below.'}
@@ -377,3 +450,19 @@ function ScoreCard({ result, questionCount }) {
     </section>
   )
 }
+
+/*
+ * A NOTE ON THE "PARTIAL" COLOUR
+ *
+ * The original file used only three tones - accent, danger, neutral - so
+ * those are the only ones known to exist here. Partial therefore renders in
+ * the neutral grey: distinct from both correct and incorrect, but not
+ * coloured.
+ *
+ * If the design system does have a warning/amber tone, three lines upgrade
+ * it, and nothing else changes:
+ *
+ *   border-line-strong   ->  border-<tone>-line     (QuestionCard border)
+ *   'neutral'            ->  '<tone>'               (Badge, add a branch)
+ *   bg-sunken text-ink   ->  bg-<tone>-soft text-<tone>   (Feedback)
+ */

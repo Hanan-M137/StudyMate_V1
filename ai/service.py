@@ -1924,3 +1924,138 @@ def generate_quiz(
     )
 
     return saved_questions
+
+# =========================================================
+# SHORT ANSWER GRADING
+# =========================================================
+#
+# Multiple-choice and true/false answers are compared as strings, which
+# is exactly right for "A" and "true". Short answers were compared the
+# same way, and could not be: measured over the 24 stored short-answer
+# questions, the average correct answer is 16.9 words and only 2 of them
+# are short enough for any string comparison to work. A student who
+# wrote "وغاية السجع موسيقية تعمل لايقاع القوافي والفواصل بين الجمل"
+# was marked wrong against "غايته موسيقية، تعمل لإيقاع الفواصل والقوافي
+# في الجمل" - the same answer, reordered and unvocalized.
+#
+# So short answers are judged by the model instead. Measured before
+# adopting it, over 12 hand-written answers whose correct verdict was
+# known in advance - four questions, Arabic and English, one-word and
+# 36-word answers, each answered correctly in other words, partially,
+# and plausibly-but-wrongly: 12 of 12, and the reasons named the
+# missing part rather than just saying "incomplete".
+#
+# The measurement was made with CLAUDE_MODEL (Sonnet), because
+# CLAUDE_FAST_MODEL is not set and get_fast_claude_model falls back to
+# it. Setting CLAUDE_FAST_MODEL changes which model marks a student's
+# work, so re-run check_answer_grading.py before doing that: a grader
+# that accepts a wrong answer fails silently and the quiz keeps looking
+# like it works.
+
+GRADING_SYSTEM_PROMPT = """
+You are marking one short-answer question from a student's quiz.
+
+You are given the question, the correct answer taken from the
+student's own study document, and what the student wrote.
+
+Decide whether the student's answer is correct. Judge the MEANING,
+not the wording. A student who says the same thing in different
+words, in a different order, with different examples, or with
+different spelling or vocalization, is correct.
+
+A student who states only part of a multi-part answer is partially
+correct: say which part they got and which part is missing.
+
+A student who says something the correct answer does not support,
+or writes something unrelated or empty, is incorrect - even if it
+sounds confident or uses the right vocabulary.
+
+Reply with JSON only, no other text, in this exact shape:
+
+{"verdict": "correct" | "partial" | "incorrect", "reason": "..."}
+
+The reason is written TO the student, in the same language they
+answered in, in one or two sentences. Tell them what was right and
+what was missing or wrong. Do not repeat the whole correct answer
+back to them, and do not be encouraging about an answer that is
+wrong.
+""".strip()
+
+
+def grade_short_answer(
+    question_text: str,
+    correct_answer: str,
+    student_answer: str | None,
+) -> dict:
+    """
+    Judge one short answer, returning {"verdict": ..., "reason": ...}
+    where verdict is "correct", "partial" or "incorrect".
+
+    This must never break a submission. Any failure - an API error, a
+    reply that is not JSON, a verdict outside the three allowed values -
+    falls back to the old exact comparison, so a quiz can always be
+    submitted even when the grading model is unreachable.
+    """
+
+    from .rag_service import get_fast_claude_model
+
+    student_answer = (student_answer or "").strip()
+
+    if not student_answer:
+        return {
+            "verdict": "incorrect",
+            "reason": "No answer was given for this question.",
+        }
+
+    try:
+
+        client = get_anthropic_client()
+
+        user_prompt = (
+            f"QUESTION:\n{question_text}\n\n"
+            f"CORRECT ANSWER:\n{correct_answer}\n\n"
+            f"STUDENT ANSWER:\n{student_answer}"
+        )
+
+        response = client.messages.create(
+            model=get_fast_claude_model(),
+            max_tokens=300,
+            system=GRADING_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+
+        text = "\n".join(
+            block.text
+            for block in response.content
+            if block.type == "text"
+        ).strip()
+
+        result = json.loads(text)
+
+        verdict = str(result.get("verdict", "")).strip().lower()
+
+        if verdict not in {"correct", "partial", "incorrect"}:
+            raise ValueError(f"unexpected verdict: {verdict!r}")
+
+        return {
+            "verdict": verdict,
+            "reason": str(result.get("reason", "")).strip(),
+        }
+
+    except Exception:
+
+        logger.warning(
+            "Short answer grading failed; falling back to exact "
+            "comparison for this question",
+            exc_info=True,
+        )
+
+        matches = (
+            student_answer.strip().upper()
+            == str(correct_answer).strip().upper()
+        )
+
+        return {
+            "verdict": "correct" if matches else "incorrect",
+            "reason": "",
+        }

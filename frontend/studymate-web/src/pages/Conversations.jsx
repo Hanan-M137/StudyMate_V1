@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { listConversations } from '../api/conversations'
+import { deleteConversation, listConversations } from '../api/conversations'
 import { listDocuments } from '../api/documents'
 import { getErrorMessage } from '../lib/errors'
 import PageHeader from '../components/PageHeader'
@@ -59,37 +59,114 @@ export default function Conversations() {
           {conversations.map((conversation, index) => (
             <li key={conversation.id ?? index}>
               <Card interactive className="transition-colors">
-                <Link
-                  to={conversation.id ? `/conversations/${conversation.id}` : '#'}
-                  className="flex items-center gap-4 px-4 py-3.5 sm:px-5"
-                >
-                  <span
-                    aria-hidden="true"
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-sunken text-muted"
+                <div className="flex items-center gap-3 px-4 py-3.5 sm:px-5">
+                  <Link
+                    to={conversation.id ? `/conversations/${conversation.id}` : '#'}
+                    className="flex min-w-0 flex-1 items-center gap-4"
                   >
-                    <ChatIcon className="h-[18px] w-[18px]" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium text-ink">
-                      {conversation.title || `Conversation ${index + 1}`}
+                    <span
+                      aria-hidden="true"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-sunken text-muted"
+                    >
+                      <ChatIcon className="h-[18px] w-[18px]" />
                     </span>
-                    <span className="type-micro block truncate text-faint">
-                      {[
-                        documentTitles[conversation.documentId] || null,
-                        formatDate(conversation.createdAt),
-                      ]
-                        .filter(Boolean)
-                        .join('  ·  ')}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-ink">
+                        {conversation.title || `Conversation ${index + 1}`}
+                      </span>
+                      <span className="type-micro block truncate text-faint">
+                        {[
+                          documentTitles[conversation.documentId] || null,
+                          formatDate(conversation.createdAt),
+                        ]
+                          .filter(Boolean)
+                          .join('  ·  ')}
+                      </span>
                     </span>
-                  </span>
-                  <ChevronIcon className="h-4 w-4 shrink-0 text-faint" />
-                </Link>
+                    <ChevronIcon className="h-4 w-4 shrink-0 text-faint" />
+                  </Link>
+
+                  {/* Only for a conversation that has a real id - a row without
+                      one links to '#' and has nothing the server could delete. */}
+                  {conversation.id ? (
+                    <DeleteConversationButton
+                      conversation={conversation}
+                      onDeleted={(deletedId) =>
+                        setConversations((current) =>
+                          current.filter((item) => item.id !== deletedId),
+                        )
+                      }
+                    />
+                  ) : null}
+                </div>
               </Card>
             </li>
           ))}
         </ul>
       )}
     </>
+  )
+}
+
+/**
+ * Delete, in two steps and outside the row's link.
+ *
+ * Two steps because the whole thread goes with it - every question asked and
+ * every answer given, with nothing to undo it.
+ */
+function DeleteConversationButton({ conversation, onDeleted }) {
+  const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function handleDelete() {
+    setError(null)
+    setDeleting(true)
+    try {
+      await deleteConversation(conversation.id)
+      onDeleted(conversation.id)
+    } catch (err) {
+      setError(getErrorMessage(err, 'Could not delete this conversation.'))
+      setDeleting(false)
+      setConfirming(false)
+    }
+  }
+
+  if (!confirming) {
+    return (
+      <div className="shrink-0 text-right">
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          className="type-micro rounded-sm px-2 py-1 text-muted transition-colors hover:bg-sunken hover:text-danger"
+        >
+          Delete
+        </button>
+        {error ? <p className="type-micro mt-1 text-danger">{error}</p> : null}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex shrink-0 items-center gap-2">
+      <span className="type-micro text-muted">Delete this thread and its messages?</span>
+      <button
+        type="button"
+        onClick={handleDelete}
+        disabled={deleting}
+        className="type-micro rounded-sm px-2 py-1 font-semibold text-danger transition-colors hover:bg-danger-soft disabled:opacity-60"
+      >
+        {deleting ? 'Deleting...' : 'Yes, delete'}
+      </button>
+      <button
+        type="button"
+        onClick={() => setConfirming(false)}
+        disabled={deleting}
+        className="type-micro rounded-sm px-2 py-1 text-muted transition-colors hover:bg-sunken hover:text-ink disabled:opacity-60"
+      >
+        Cancel
+      </button>
+    </div>
   )
 }
 

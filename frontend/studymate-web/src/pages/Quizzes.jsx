@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { listDocuments, isReady } from '../api/documents'
-import { createQuiz } from '../api/quizzes'
+import { createQuiz, deleteQuiz, listQuizzes } from '../api/quizzes'
 import { getErrorMessage } from '../lib/errors'
 import PageHeader from '../components/PageHeader'
 import { ChevronIcon, QuizIcon } from '../components/icons'
@@ -19,39 +19,11 @@ import {
   Select,
 } from '../components/ui'
 
-/**
- * The API has no "list quizzes" endpoint, so quizzes created in this browser
- * are remembered locally just so they can be reopened. Client-side convenience
- * only - it is not backend state.
- */
-const RECENT_KEY = 'studymate.recent_quizzes'
-
-function readRecent() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]')
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-export function rememberQuiz(quiz) {
-  if (!quiz?.id) return
-  try {
-    const next = [
-      { id: quiz.id, title: quiz.title || 'Untitled quiz', createdAt: new Date().toISOString() },
-      ...readRecent().filter((item) => item.id !== quiz.id),
-    ].slice(0, 20)
-    localStorage.setItem(RECENT_KEY, JSON.stringify(next))
-  } catch {
-    /* ignore */
-  }
-}
-
 export default function Quizzes() {
   const navigate = useNavigate()
 
   const [documents, setDocuments] = useState([])
+  const [quizzes, setQuizzes] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
 
@@ -61,18 +33,18 @@ export default function Quizzes() {
 
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState(null)
-  const [recent, setRecent] = useState(readRecent)
 
   const load = useCallback(async () => {
     setLoading(true)
     setLoadError(null)
     try {
-      const docs = await listDocuments()
+      const [docs, savedQuizzes] = await Promise.all([listDocuments(), listQuizzes()])
       setDocuments(docs)
+      setQuizzes(savedQuizzes)
       const firstReady = docs.find((doc) => isReady(doc.status))
       if (firstReady) setDocumentId((current) => current || firstReady.id)
     } catch (err) {
-      setLoadError(getErrorMessage(err, 'Could not load your documents.'))
+      setLoadError(getErrorMessage(err, 'Could not load your quizzes.'))
     } finally {
       setLoading(false)
     }
@@ -99,8 +71,6 @@ export default function Quizzes() {
     try {
       const quiz = await createQuiz({ documentId, title: title.trim(), numQuestions })
       if (quiz.id) {
-        rememberQuiz(quiz)
-        setRecent(readRecent())
         navigate(`/quizzes/${quiz.id}`)
       } else {
         setCreateError(
@@ -126,7 +96,7 @@ export default function Quizzes() {
 
       <div className="space-y-8">
         {loading ? (
-          <LoadingState label="Loading your documents" rows={2} />
+          <LoadingState label="Loading your quizzes" rows={2} />
         ) : loadError ? (
           <ErrorState message={loadError} onRetry={load} />
         ) : readyDocuments.length === 0 ? (
@@ -205,56 +175,157 @@ export default function Quizzes() {
           </Card>
         )}
 
-        <section>
-          <h2 className="type-eyebrow mb-3">Created in this browser</h2>
-          {recent.length === 0 ? (
-            <p className="type-small measure text-muted">
-              Nothing yet. The API has no list-quizzes endpoint, so this list only remembers
-              quizzes created on this device.
-            </p>
-          ) : (
-            <>
+        {/* Read from the database, so the same quizzes appear on any device.
+            This used to be a list kept in this browser's local storage - the
+            quizzes were always saved on the server, but nothing listed them. */}
+        {!loading && !loadError ? (
+          <section>
+            <h2 className="type-eyebrow mb-3">Your quizzes</h2>
+            {quizzes.length === 0 ? (
+              <p className="type-small measure text-muted">
+                Nothing yet. Create one above and it will appear here.
+              </p>
+            ) : (
               <ul className="space-y-2">
-                {recent.map((quiz) => (
+                {quizzes.map((quiz) => (
                   <li key={quiz.id}>
                     <Card interactive>
-                      <Link
-                        to={`/quizzes/${quiz.id}`}
-                        className="flex items-center gap-4 px-4 py-3 sm:px-5"
-                      >
-                        <span
-                          aria-hidden="true"
-                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-sunken text-muted"
+                      <div className="flex items-center gap-3 px-4 py-3 sm:px-5">
+                        <Link
+                          to={`/quizzes/${quiz.id}`}
+                          className="flex min-w-0 flex-1 items-center gap-4"
                         >
-                          <QuizIcon className="h-4 w-4" />
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
-                          {quiz.title}
-                        </span>
-                        <ChevronIcon className="h-4 w-4 shrink-0 text-faint" />
-                      </Link>
+                          <span
+                            aria-hidden="true"
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-sunken text-muted"
+                          >
+                            <QuizIcon className="h-4 w-4" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium text-ink">
+                              {quiz.title}
+                            </span>
+                            <span className="type-micro block truncate text-faint">
+                              {describeQuiz(quiz)}
+                            </span>
+                          </span>
+                          <ChevronIcon className="h-4 w-4 shrink-0 text-faint" />
+                        </Link>
+
+                        <DeleteQuizButton
+                          quiz={quiz}
+                          onDeleted={(deletedId) =>
+                            setQuizzes((current) =>
+                              current.filter((item) => item.id !== deletedId),
+                            )
+                          }
+                        />
+                      </div>
                     </Card>
                   </li>
                 ))}
               </ul>
-              <button
-                type="button"
-                className="type-micro mt-3 text-muted underline underline-offset-4 transition-colors hover:text-ink"
-                onClick={() => {
-                  try {
-                    localStorage.removeItem(RECENT_KEY)
-                  } catch {
-                    /* ignore */
-                  }
-                  setRecent([])
-                }}
-              >
-                Clear this list
-              </button>
-            </>
-          )}
-        </section>
+            )}
+          </section>
+        ) : null}
       </div>
     </>
   )
+}
+
+/**
+ * Delete, in two steps and outside the row's link.
+ *
+ * Two steps because deleting a quiz also deletes every attempt recorded
+ * against it, and those attempts are the only record of what was scored -
+ * there is nothing to undo it with. The confirmation says so when there are
+ * attempts to lose.
+ */
+function DeleteQuizButton({ quiz, onDeleted }) {
+  const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function handleDelete() {
+    setError(null)
+    setDeleting(true)
+    try {
+      await deleteQuiz(quiz.id)
+      onDeleted(quiz.id)
+    } catch (err) {
+      setError(getErrorMessage(err, 'Could not delete this quiz.'))
+      setDeleting(false)
+      setConfirming(false)
+    }
+  }
+
+  if (!confirming) {
+    return (
+      <div className="shrink-0 text-right">
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          className="type-micro rounded-sm px-2 py-1 text-muted transition-colors hover:bg-sunken hover:text-danger"
+        >
+          Delete
+        </button>
+        {error ? <p className="type-micro mt-1 text-danger">{error}</p> : null}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex shrink-0 items-center gap-2">
+      <span className="type-micro text-muted">
+        {quiz.attemptsCount
+          ? `Delete this quiz and its ${quiz.attemptsCount} ${
+              quiz.attemptsCount === 1 ? 'attempt' : 'attempts'
+            }?`
+          : 'Delete this quiz?'}
+      </span>
+      <button
+        type="button"
+        onClick={handleDelete}
+        disabled={deleting}
+        className="type-micro rounded-sm px-2 py-1 font-semibold text-danger transition-colors hover:bg-danger-soft disabled:opacity-60"
+      >
+        {deleting ? 'Deleting...' : 'Yes, delete'}
+      </button>
+      <button
+        type="button"
+        onClick={() => setConfirming(false)}
+        disabled={deleting}
+        className="type-micro rounded-sm px-2 py-1 text-muted transition-colors hover:bg-sunken hover:text-ink disabled:opacity-60"
+      >
+        Cancel
+      </button>
+    </div>
+  )
+}
+
+/** The second line of a quiz row: where it came from and what is in it. */
+function describeQuiz(quiz) {
+  const parts = []
+
+  if (quiz.documentTitle) parts.push(quiz.documentTitle)
+
+  if (quiz.questionsCount != null) {
+    parts.push(`${quiz.questionsCount} ${quiz.questionsCount === 1 ? 'question' : 'questions'}`)
+  }
+
+  if (quiz.attemptsCount) {
+    parts.push(`${quiz.attemptsCount} ${quiz.attemptsCount === 1 ? 'attempt' : 'attempts'}`)
+  }
+
+  const date = formatDate(quiz.createdAt)
+  if (date) parts.push(date)
+
+  return parts.join(' · ')
+}
+
+function formatDate(value) {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
 }
