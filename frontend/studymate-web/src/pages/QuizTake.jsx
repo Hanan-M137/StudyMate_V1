@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { getQuiz, submitQuizAttempt } from '../api/quizzes'
+import {
+  getQuiz,
+  getQuizAttempt,
+  listQuizAttempts,
+  submitQuizAttempt,
+} from '../api/quizzes'
 import { getErrorMessage } from '../lib/errors'
 import { CheckIcon, CloseIcon } from '../components/icons'
 import {
@@ -25,6 +30,7 @@ export default function QuizTake() {
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState(null)
   const [result, setResult] = useState(null)
+  const [attempts, setAttempts] = useState([])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -34,6 +40,9 @@ export default function QuizTake() {
     try {
       const loaded = await getQuiz(quizId)
       setQuiz(loaded)
+      // A failure here must not hide the quiz itself, so the list
+      // falls back to empty rather than becoming a page error.
+      setAttempts(await listQuizAttempts(quizId).catch(() => []))
     } catch (err) {
       setError(getErrorMessage(err, 'Could not load this quiz.'))
     } finally {
@@ -63,6 +72,8 @@ export default function QuizTake() {
         if (trimmed !== '') payload[questionId] = trimmed
       }
       setResult(await submitQuizAttempt(quizId, payload))
+      // The attempt just recorded belongs in the table too.
+      listQuizAttempts(quizId).then(setAttempts).catch(() => {})
       window.scrollTo({
         top: 0,
         behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
@@ -99,6 +110,8 @@ export default function QuizTake() {
       </header>
 
       {result ? <ScoreCard result={result} questionCount={questions.length} /> : null}
+
+      <AttemptsTable quizId={quizId} attempts={attempts} />
 
       {!result && questions.length > 0 ? (
         <div className="sticky top-0 z-10 -mx-4 mb-6 border-b border-line bg-paper/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10">
@@ -389,6 +402,216 @@ function findFeedback(result, questionId) {
   return (
     result.results.find((item) => String(item?.question_id ?? '') === String(questionId)) || null
   )
+}
+
+/**
+ * Past attempts at this quiz, newest first, each one openable.
+ *
+ * The score was stored; the per-question verdicts were not. Choice
+ * questions are therefore re-compared here - free, and the same string
+ * comparison that marked them the first time - while a short answer shows
+ * what was written next to the model answer, with no verdict, because
+ * re-judging it would be a paid call that could disagree with the mark the
+ * student already saw.
+ */
+function AttemptsTable({ quizId, attempts }) {
+  const [openId, setOpenId] = useState(null)
+  const [detail, setDetail] = useState(null)
+  const [loadingDetail, setLoadingDetail] = useState(false)
+  const [detailError, setDetailError] = useState(null)
+
+  async function toggleAttempt(attemptId) {
+    if (openId === attemptId) {
+      setOpenId(null)
+      setDetail(null)
+      setDetailError(null)
+      return
+    }
+
+    setOpenId(attemptId)
+    setDetail(null)
+    setDetailError(null)
+    setLoadingDetail(true)
+    try {
+      setDetail(await getQuizAttempt(quizId, attemptId))
+    } catch (err) {
+      setDetailError(getErrorMessage(err, 'Could not load this attempt.'))
+    } finally {
+      setLoadingDetail(false)
+    }
+  }
+
+  if (!attempts || attempts.length === 0) return null
+
+  return (
+    <section className="mb-7">
+      <h2 className="type-eyebrow mb-3">Previous attempts</h2>
+
+      {/* A table is the one thing allowed to be wider than the page, so it
+          gets its own horizontal scroll instead of pushing the layout. */}
+      <div className="overflow-x-auto rounded-xl border border-line bg-surface">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-line text-left">
+              <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
+                Attempt
+              </th>
+              <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
+                Score
+              </th>
+              <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
+                Percentage
+              </th>
+              <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
+                Taken
+              </th>
+              <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
+                <span className="sr-only">Answers</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {attempts.map((attempt, index) => (
+              <tr key={attempt.id} className="border-b border-line last:border-b-0">
+                <td className="px-4 py-2.5 tabular-nums text-muted">
+                  {attempts.length - index}
+                </td>
+                <td className="px-4 py-2.5 tabular-nums text-ink">
+                  {attempt.score ?? '--'}
+                  {attempt.totalQuestions != null ? ` / ${attempt.totalQuestions}` : ''}
+                </td>
+                <td className="px-4 py-2.5 tabular-nums text-ink">
+                  {attempt.percentage != null ? `${Math.round(attempt.percentage)}%` : '--'}
+                </td>
+                <td className="px-4 py-2.5 text-muted">
+                  {formatDateTime(attempt.completedAt) || '--'}
+                </td>
+                <td className="px-4 py-2.5 text-right">
+                  <button
+                    type="button"
+                    onClick={() => toggleAttempt(attempt.id)}
+                    className="type-micro rounded-sm px-2 py-1 font-medium text-muted underline underline-offset-4 transition-colors hover:text-ink"
+                  >
+                    {openId === attempt.id ? 'Hide answers' : 'View answers'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {openId ? (
+        <div className="mt-3">
+          {loadingDetail ? (
+            <LoadingState label="Loading your answers" rows={2} />
+          ) : detailError ? (
+            <InlineError message={detailError} />
+          ) : detail ? (
+            <AttemptDetail detail={detail} />
+          ) : null}
+        </div>
+      ) : null}
+
+      <p className="type-micro mt-1.5 text-faint">
+        Newest first. Choice questions are re-checked here; written answers show
+        yours next to the model answer without a mark.
+      </p>
+    </section>
+  )
+}
+
+/** One opened attempt: every question, with what was written and what was right. */
+function AttemptDetail({ detail }) {
+  if (!detail.questions || detail.questions.length === 0) {
+    return <p className="type-small text-muted">This attempt recorded no answers.</p>
+  }
+
+  return (
+    <ol className="space-y-2.5">
+      {detail.questions.map((question, index) => {
+        const yours = describeAnswer(question, question.studentAnswer)
+        const right = describeAnswer(question, question.correctAnswer)
+
+        return (
+          <li
+            key={question.id}
+            className={cx(
+              'rounded-sm border bg-surface px-4 py-3',
+              question.verdict === 'correct'
+                ? 'border-accent-line'
+                : question.verdict === 'incorrect'
+                  ? 'border-danger-line'
+                  : 'border-line',
+            )}
+          >
+            <p className="measure type-small font-medium text-ink">
+              <span className="mr-2 text-faint tabular-nums">{index + 1}.</span>
+              {question.text}
+            </p>
+
+            <div className="type-small mt-2 space-y-1">
+              <p className={cx(yours ? 'text-ink' : 'text-faint')}>
+                <span className="font-semibold text-muted">You wrote: </span>
+                {yours || 'nothing'}
+              </p>
+              <p className="text-ink">
+                <span className="font-semibold text-muted">Correct: </span>
+                {right || '--'}
+              </p>
+              {question.explanation ? (
+                <p className="text-muted">{question.explanation}</p>
+              ) : null}
+            </div>
+
+            {question.verdict == null ? (
+              <p className="type-micro mt-2 text-faint">
+                Written answer &mdash; the mark it was given at the time is not kept.
+              </p>
+            ) : null}
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
+/**
+ * Turn a stored answer into something readable: "B — the frame buffer"
+ * rather than "B". Option keys are matched without case, because a choice
+ * answer is stored upper-cased while true/false options are keyed in lower
+ * case.
+ */
+function describeAnswer(question, value) {
+  if (value == null || String(value).trim() === '') return null
+
+  const raw = String(value).trim()
+  const options = question.options
+
+  if (options && typeof options === 'object' && !Array.isArray(options)) {
+    const key = Object.keys(options).find(
+      (candidate) => candidate.trim().toLowerCase() === raw.toLowerCase(),
+    )
+
+    if (key) {
+      const text = String(options[key] ?? '')
+      return question.type === 'true_false' ? text : `${key} — ${text}`
+    }
+  }
+
+  return raw
+}
+
+function formatDateTime(value) {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function ScoreCard({ result, questionCount }) {

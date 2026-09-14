@@ -94,13 +94,35 @@ export function normaliseQuestion(raw, index = 0) {
   }
 }
 
-/** POST /quizzes - the title is echoed back from the caller, not the API. */
-export async function createQuiz({ documentId, title, numQuestions }) {
-  const { data } = await client.post('/quizzes', {
+/**
+ * POST /quizzes - the title is echoed back from the caller, not the API.
+ *
+ * `question_types` is a list; omitting it means all three. It replaced the
+ * old singular `question_type`, which the backend accepted and ignored.
+ * `description` steers generation and is not stored with the quiz.
+ */
+export async function createQuiz({
+  documentId,
+  title,
+  numQuestions,
+  questionTypes,
+  description,
+}) {
+  const payload = {
     document_id: documentId,
     title,
     num_questions: Number(numQuestions) || 10,
-  })
+  }
+
+  if (Array.isArray(questionTypes) && questionTypes.length > 0) {
+    payload.question_types = questionTypes
+  }
+
+  if (description && description.trim()) {
+    payload.description = description.trim()
+  }
+
+  const { data } = await client.post('/quizzes', payload)
 
   return {
     id: data?.quiz_id != null ? String(data.quiz_id) : null,
@@ -170,6 +192,61 @@ export async function submitQuizAttempt(quizId, answers) {
     wrongCount: numberOrNull(data?.wrong_answers),
     results: Array.isArray(data?.results) ? data.results : [],
     raw: data,
+  }
+}
+
+/**
+ * GET /quizzes/{quiz_id}/attempts
+ *   { total_questions, attempts: [ { id, score, total_questions,
+ *                                    percentage, completed_at } ] }
+ *
+ * Newest first. Per-question verdicts are not stored, so an attempt
+ * carries its score and nothing more.
+ */
+export async function listQuizAttempts(quizId) {
+  const { data } = await client.get(`/quizzes/${quizId}/attempts`)
+  const rows = Array.isArray(data?.attempts) ? data.attempts : []
+
+  return rows.map((row) => ({
+    id: String(row?.id ?? ''),
+    score: numberOrNull(row?.score),
+    totalQuestions: numberOrNull(row?.total_questions),
+    percentage: numberOrNull(row?.percentage),
+    completedAt: row?.completed_at ?? null,
+  }))
+}
+/**
+ * GET /quizzes/{quiz_id}/attempts/{attempt_id}
+ *   { attempt: {...}, questions: [ { id, question_index, question_text,
+ *     question_type, options, student_answer, correct_answer, explanation,
+ *     source_page, verdict } ] }
+ *
+ * `verdict` is "correct" | "incorrect" for multiple choice and true/false,
+ * which are re-compared as strings, and null for short answers, whose
+ * original verdict was a model judgement and is not stored.
+ */
+export async function getQuizAttempt(quizId, attemptId) {
+  const { data } = await client.get(`/quizzes/${quizId}/attempts/${attemptId}`)
+  const meta = data?.attempt ?? {}
+  const rows = Array.isArray(data?.questions) ? data.questions : []
+
+  return {
+    id: String(meta.id ?? attemptId),
+    score: numberOrNull(meta.score),
+    totalQuestions: numberOrNull(meta.total_questions),
+    percentage: numberOrNull(meta.percentage),
+    completedAt: meta.completed_at ?? null,
+    questions: rows.map((row, index) => ({
+      id: String(row?.id ?? `attempt-question-${index}`),
+      text: row?.question_text ?? '',
+      type: String(row?.question_type ?? '').toLowerCase(),
+      options: row?.options ?? null,
+      studentAnswer: row?.student_answer ?? null,
+      correctAnswer: row?.correct_answer ?? null,
+      explanation: row?.explanation ?? '',
+      sourcePage: row?.source_page ?? null,
+      verdict: row?.verdict ?? null,
+    })),
   }
 }
 

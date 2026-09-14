@@ -17,7 +17,19 @@ import {
   Input,
   LoadingState,
   Select,
+  cx,
 } from '../components/ui'
+
+/* The three types the backend knows. Sent as a list; sending all three is
+   the same as sending none, which is how the endpoint behaved before the
+   choice existed. */
+const QUESTION_TYPE_CHOICES = [
+  { value: 'multiple_choice', label: 'Multiple choice' },
+  { value: 'true_false', label: 'True / false' },
+  { value: 'short_answer', label: 'Short answer' },
+]
+
+const ALL_TYPES = QUESTION_TYPE_CHOICES.map((choice) => choice.value)
 
 export default function Quizzes() {
   const navigate = useNavigate()
@@ -30,6 +42,8 @@ export default function Quizzes() {
   const [documentId, setDocumentId] = useState('')
   const [title, setTitle] = useState('')
   const [numQuestions, setNumQuestions] = useState(10)
+  const [questionTypes, setQuestionTypes] = useState(ALL_TYPES)
+  const [description, setDescription] = useState('')
 
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState(null)
@@ -54,6 +68,14 @@ export default function Quizzes() {
     load()
   }, [load])
 
+  function toggleQuestionType(value) {
+    setQuestionTypes((current) =>
+      current.includes(value)
+        ? current.filter((item) => item !== value)
+        : ALL_TYPES.filter((item) => current.includes(item) || item === value),
+    )
+  }
+
   async function handleCreate(event) {
     event.preventDefault()
     setCreateError(null)
@@ -66,10 +88,20 @@ export default function Quizzes() {
       setCreateError('Give the quiz a title.')
       return
     }
+    if (questionTypes.length === 0) {
+      setCreateError('Pick at least one question type.')
+      return
+    }
 
     setCreating(true)
     try {
-      const quiz = await createQuiz({ documentId, title: title.trim(), numQuestions })
+      const quiz = await createQuiz({
+        documentId,
+        title: title.trim(),
+        numQuestions,
+        questionTypes,
+        description,
+      })
       if (quiz.id) {
         navigate(`/quizzes/${quiz.id}`)
       } else {
@@ -160,13 +192,83 @@ export default function Quizzes() {
                 )}
               </Field>
 
+              {/* A checkbox group rather than a dropdown: the useful requests
+                  are combinations - multiple choice plus short answer, say -
+                  and a dropdown cannot express one. */}
+              <fieldset>
+                <legend className="type-small mb-1.5 font-medium text-ink">
+                  Question types
+                </legend>
+                <div className="flex flex-wrap gap-2">
+                  {QUESTION_TYPE_CHOICES.map((choice) => {
+                    const checked = questionTypes.includes(choice.value)
+                    return (
+                      <label
+                        key={choice.value}
+                        className={cx(
+                          'flex cursor-pointer items-center gap-2 rounded-sm border px-3 py-2 text-sm transition-colors duration-150',
+                          checked
+                            ? 'border-accent bg-accent-soft text-ink'
+                            : 'border-line bg-surface text-muted hover:border-line-strong hover:bg-sunken/60',
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleQuestionType(choice.value)}
+                          className="sr-only"
+                        />
+                        <span
+                          aria-hidden="true"
+                          className={cx(
+                            'flex h-4 w-4 shrink-0 items-center justify-center rounded-xs border',
+                            checked ? 'border-accent bg-accent' : 'border-line-strong bg-surface',
+                          )}
+                        >
+                          {checked ? (
+                            <span className="h-1.5 w-1.5 rounded-xs bg-on-accent" />
+                          ) : null}
+                        </span>
+                        {choice.label}
+                      </label>
+                    )
+                  })}
+                </div>
+                <p className="type-micro mt-1.5 text-faint">
+                  Pick at least one. All three is the same as leaving it alone.
+                </p>
+              </fieldset>
+
+              {/* Steers generation only. It is not saved with the quiz, so it
+                  will not appear anywhere after the quiz is created. */}
+              <div>
+                <label
+                  htmlFor="quiz-description"
+                  className="type-small mb-1.5 block font-medium text-ink"
+                >
+                  What should it focus on?{' '}
+                  <span className="font-normal text-faint">(optional)</span>
+                </label>
+                <textarea
+                  id="quiz-description"
+                  rows={3}
+                  value={description}
+                  placeholder="For example: the rules of building the imperative verb, not the vocabulary"
+                  onChange={(event) => setDescription(event.target.value)}
+                  className="w-full rounded-sm border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-faint focus:border-accent focus:outline-none"
+                />
+                <p className="type-micro mt-1.5 text-faint">
+                  Used while generating, then discarded. It is not saved with the quiz.
+                </p>
+              </div>
+
               <InlineError message={createError} />
             </CardBody>
 
             <CardFooter className="flex flex-wrap items-center justify-between gap-3">
               <p className="type-small max-w-md text-muted">
-                Your quiz will contain a mix of question types &mdash; multiple choice, true or
-                false, and short answer. The mix is chosen by the generator and cannot be set here.
+                Questions are written from this document only. Anything the generator
+                produces outside the types you picked is discarded before the quiz is saved.
               </p>
               <Button type="submit" loading={creating}>
                 {creating ? 'Generating...' : 'Create quiz'}

@@ -1190,12 +1190,111 @@ def build_quiz_context(
 
 
 # =========================================================
+# QUESTION TYPES
+# =========================================================
+#
+# The three types the generator knows. A request may ask for
+# any subset; asking for none means all three, which is what
+# this module did before the choice existed.
+
+QUESTION_TYPES = (
+    "multiple_choice",
+    "true_false",
+    "short_answer",
+)
+
+
+# The JSON shape shown to Claude for each type. Only the shapes
+# for the requested types are sent: showing the shape of a type
+# that is not wanted is an invitation to produce it.
+#
+# Plain strings, not f-strings - the braces are literal JSON and
+# are interpolated into the prompt as a finished value.
+
+QUESTION_TYPE_EXAMPLES = {
+
+    "multiple_choice": """
+For multiple choice:
+
+{
+    "question_text": "...",
+    "question_type": "multiple_choice",
+    "options": {
+        "A": "...",
+        "B": "...",
+        "C": "...",
+        "D": "..."
+    },
+    "correct_answer": "A",
+    "explanation": "...",
+    "source_page": 1
+}
+""".strip(),
+
+    "true_false": """
+For true/false:
+
+{
+    "question_text": "...",
+    "question_type": "true_false",
+    "options": {
+        "true": "True",
+        "false": "False"
+    },
+    "correct_answer": "true",
+    "explanation": "...",
+    "source_page": 1
+}
+""".strip(),
+
+    "short_answer": """
+For short answer:
+
+{
+    "question_text": "...",
+    "question_type": "short_answer",
+    "options": null,
+    "correct_answer": "...",
+    "explanation": "...",
+    "source_page": 1
+}
+""".strip(),
+}
+
+
+def resolve_question_types(question_types) -> list[str]:
+    """
+    Clean a requested list of types down to known ones, in a
+    stable order. Anything unknown is dropped; an empty result
+    means all three.
+    """
+
+    if not question_types:
+        return list(QUESTION_TYPES)
+
+    requested = {
+        str(item).strip().lower()
+        for item in question_types
+    }
+
+    resolved = [
+        name
+        for name in QUESTION_TYPES
+        if name in requested
+    ]
+
+    return resolved or list(QUESTION_TYPES)
+
+
+# =========================================================
 # GENERATE QUIZ WITH CLAUDE
 # =========================================================
 
 def generate_quiz_with_claude(
     context: str,
     question_count: int = DEFAULT_QUESTION_COUNT,
+    question_types: list[str] | None = None,
+    description: str | None = None,
 ) -> list[dict]:
     """
     Ask Claude to generate quiz questions
@@ -1206,6 +1305,11 @@ def generate_quiz_with_claude(
     - multiple_choice
     - true_false
     - short_answer
+
+    question_types limits which of those may appear; omitting
+    it means all three. description is optional free text from
+    the student saying what the quiz should concentrate on - it
+    steers generation and is not stored anywhere.
 
     Returns a list of dictionaries.
     """
@@ -1231,11 +1335,10 @@ using ONLY the provided document context.
 
 Do NOT use outside knowledge.
 
-Generate a mixture of:
-
-- multiple choice questions
-- true/false questions
-- short answer questions
+Generate ONLY the question types listed in the TASK
+section of the user message. Do not produce a type that
+is not listed there, even if the document suits it
+better.
 
 Every question must contain:
 
@@ -1270,11 +1373,37 @@ Rules:
 12. Make questions clear and educational.
 13. Avoid creating multiple questions that
     test exactly the same information.
+14. If the TASK contains a FOCUS section, prefer material
+    that serves it, and skip parts of the document that do
+    not - but never invent anything to satisfy it, and
+    never leave the document to find it.
+15. If the FOCUS asks for something the document does not
+    cover, ignore it and generate from the document anyway.
 """.strip()
 
     # -----------------------------------------------------
     # User prompt
     # -----------------------------------------------------
+
+    resolved_types = resolve_question_types(question_types)
+
+    type_examples = "\n\n".join(
+        QUESTION_TYPE_EXAMPLES[name]
+        for name in resolved_types
+    )
+
+    # An empty focus section leaves the prompt exactly as it
+    # was before this feature, rather than adding an empty
+    # heading for Claude to wonder about.
+
+    focus_section = ""
+
+    if description and description.strip():
+
+        focus_section = (
+            "\n\nFOCUS:\n\n"
+            f"{description.strip()}\n"
+        )
 
     user_prompt = f"""
 DOCUMENT CONTEXT:
@@ -1286,48 +1415,16 @@ TASK:
 Generate exactly {question_count}
 quiz questions from the document.
 
+Allowed question types: {", ".join(resolved_types)}
+
+Every question must use one of those types and no
+other.{focus_section}
+
 Return ONLY a valid JSON array.
 
-Each item must follow this structure:
+Each item must follow the matching structure:
 
-{{
-    "question_text": "...",
-    "question_type": "multiple_choice",
-    "options": {{
-        "A": "...",
-        "B": "...",
-        "C": "...",
-        "D": "..."
-    }},
-    "correct_answer": "A",
-    "explanation": "...",
-    "source_page": 1
-}}
-
-For true/false:
-
-{{
-    "question_text": "...",
-    "question_type": "true_false",
-    "options": {{
-        "true": "True",
-        "false": "False"
-    }},
-    "correct_answer": "true",
-    "explanation": "...",
-    "source_page": 1
-}}
-
-For short answer:
-
-{{
-    "question_text": "...",
-    "question_type": "short_answer",
-    "options": null,
-    "correct_answer": "...",
-    "explanation": "...",
-    "source_page": 1
-}}
+{type_examples}
 """.strip()
 
     # -----------------------------------------------------
@@ -1335,9 +1432,11 @@ For short answer:
     # -----------------------------------------------------
 
     logger.info(
-        "Generating %d quiz questions using Claude model '%s'.",
+        "Generating %d quiz questions using Claude model '%s'. "
+        "Types: %s.",
         question_count,
         model,
+        ", ".join(resolved_types),
     )
 
     try:
@@ -1771,6 +1870,8 @@ def generate_quiz(
     db: Session,
     quiz: Quiz,
     question_count: int = DEFAULT_QUESTION_COUNT,
+    question_types: list[str] | None = None,
+    description: str | None = None,
 ) -> list[QuizQuestion]:
     """
     Complete AI quiz generation pipeline.
@@ -1793,6 +1894,8 @@ def generate_quiz(
         Claude
           ↓
         JSON questions
+          ↓
+        Enforce requested types
           ↓
         Validate
           ↓
@@ -1902,10 +2005,56 @@ def generate_quiz(
     # Generate questions with Claude
     # -----------------------------------------------------
 
+    resolved_types = resolve_question_types(question_types)
+
     questions = generate_quiz_with_claude(
         context=context,
         question_count=question_count,
+        question_types=resolved_types,
+        description=description,
     )
+
+    # -----------------------------------------------------
+    # Enforce the requested types
+    # -----------------------------------------------------
+    #
+    # The prompt asks; this checks. A model told to produce
+    # only short answers will still slip in a multiple choice
+    # now and then, and a student who asked for one kind of
+    # practice should not have to take another.
+
+    if len(resolved_types) < len(QUESTION_TYPES):
+
+        allowed = set(resolved_types)
+
+        kept = [
+            question
+            for question in questions
+            if isinstance(question, dict)
+            and str(
+                question.get("question_type", "")
+            ).strip().lower() in allowed
+        ]
+
+        if len(kept) != len(questions):
+
+            logger.warning(
+                "Quiz %s: %d generated question(s) fell outside the "
+                "requested types %s and were dropped.",
+                quiz.id,
+                len(questions) - len(kept),
+                ", ".join(resolved_types),
+            )
+
+        if not kept:
+
+            raise ValueError(
+                "The generator returned no questions of the "
+                "requested type. Try again, or allow more "
+                "question types."
+            )
+
+        questions = kept
 
     # -----------------------------------------------------
     # Save questions
@@ -1925,32 +2074,21 @@ def generate_quiz(
 
     return saved_questions
 
+
 # =========================================================
 # SHORT ANSWER GRADING
 # =========================================================
 #
-# Multiple-choice and true/false answers are compared as strings, which
-# is exactly right for "A" and "true". Short answers were compared the
-# same way, and could not be: measured over the 24 stored short-answer
-# questions, the average correct answer is 16.9 words and only 2 of them
-# are short enough for any string comparison to work. A student who
-# wrote "وغاية السجع موسيقية تعمل لايقاع القوافي والفواصل بين الجمل"
-# was marked wrong against "غايته موسيقية، تعمل لإيقاع الفواصل والقوافي
-# في الجمل" - the same answer, reordered and unvocalized.
+# Measured before it was written: of the 24 stored short-answer
+# questions the average correct answer is 16.9 words and only 2 are
+# three words or shorter. String comparison is not a threshold to
+# tune here, it is the wrong tool. A model agreed with a hand-written
+# expected verdict on 12 of 12 cases across Arabic and English, over
+# correct-in-other-words, partial, and confidently-wrong answers.
 #
-# So short answers are judged by the model instead. Measured before
-# adopting it, over 12 hand-written answers whose correct verdict was
-# known in advance - four questions, Arabic and English, one-word and
-# 36-word answers, each answered correctly in other words, partially,
-# and plausibly-but-wrongly: 12 of 12, and the reasons named the
-# missing part rather than just saying "incomplete".
-#
-# The measurement was made with CLAUDE_MODEL (Sonnet), because
-# CLAUDE_FAST_MODEL is not set and get_fast_claude_model falls back to
-# it. Setting CLAUDE_FAST_MODEL changes which model marks a student's
-# work, so re-run check_answer_grading.py before doing that: a grader
-# that accepts a wrong answer fails silently and the quiz keeps looking
-# like it works.
+# This is the third paid use of Claude, after answering and quiz
+# generation: about 900 input tokens per question against ~20,000 for
+# generating the quiz itself.
 
 GRADING_SYSTEM_PROMPT = """
 You are marking one short-answer question from a student's quiz.
@@ -1982,19 +2120,14 @@ wrong.
 """.strip()
 
 
-def grade_short_answer(
-    question_text: str,
-    correct_answer: str,
-    student_answer: str | None,
-) -> dict:
+def grade_short_answer(question_text, correct_answer, student_answer) -> dict:
     """
-    Judge one short answer, returning {"verdict": ..., "reason": ...}
-    where verdict is "correct", "partial" or "incorrect".
+    Mark one short answer by meaning. Returns
+    {"verdict": "correct"|"partial"|"incorrect", "reason": str}.
 
-    This must never break a submission. Any failure - an API error, a
-    reply that is not JSON, a verdict outside the three allowed values -
-    falls back to the old exact comparison, so a quiz can always be
-    submitted even when the grading model is unreachable.
+    Never raises: if the call fails the old exact comparison is used
+    for that one question, so a grading outage marks strictly rather
+    than failing the whole submission.
     """
 
     from .rag_service import get_fast_claude_model
@@ -2008,7 +2141,6 @@ def grade_short_answer(
         }
 
     try:
-
         client = get_anthropic_client()
 
         user_prompt = (
@@ -2025,37 +2157,22 @@ def grade_short_answer(
         )
 
         text = "\n".join(
-            block.text
-            for block in response.content
-            if block.type == "text"
+            block.text for block in response.content if block.type == "text"
         ).strip()
 
         result = json.loads(text)
 
         verdict = str(result.get("verdict", "")).strip().lower()
-
         if verdict not in {"correct", "partial", "incorrect"}:
             raise ValueError(f"unexpected verdict: {verdict!r}")
 
-        return {
-            "verdict": verdict,
-            "reason": str(result.get("reason", "")).strip(),
-        }
+        return {"verdict": verdict, "reason": str(result.get("reason", "")).strip()}
 
     except Exception:
-
         logger.warning(
             "Short answer grading failed; falling back to exact "
             "comparison for this question",
             exc_info=True,
         )
-
-        matches = (
-            student_answer.strip().upper()
-            == str(correct_answer).strip().upper()
-        )
-
-        return {
-            "verdict": "correct" if matches else "incorrect",
-            "reason": "",
-        }
+        matches = student_answer.strip().upper() == str(correct_answer).strip().upper()
+        return {"verdict": "correct" if matches else "incorrect", "reason": ""}
