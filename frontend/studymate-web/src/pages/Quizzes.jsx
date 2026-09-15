@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { listDocuments, isReady } from '../api/documents'
-import { createQuiz, deleteQuiz, listQuizzes, renameQuiz } from '../api/quizzes'
+import {
+  createQuiz,
+  deleteQuiz,
+  listQuizzes,
+  renameQuiz,
+  setQuizPinned,
+} from '../api/quizzes'
 import { getErrorMessage } from '../lib/errors'
+import { sortPinnedFirst } from '../lib/pinned'
 import PageHeader from '../components/PageHeader'
+import PinButton from '../components/PinButton'
 import VoiceInput from '../components/VoiceInput'
 import { ChevronIcon, DocumentIcon, QuizIcon } from '../components/icons'
 import {
@@ -237,6 +245,18 @@ export default function Quizzes() {
   function handleRenamed(quizId, newTitle) {
     setQuizzes((current) =>
       current.map((quiz) => (quiz.id === quizId ? { ...quiz, title: newTitle } : quiz)),
+    )
+  }
+
+  /* The row is updated in place rather than reloading the list - one field
+     changed and the server has already confirmed it - but the list is
+     re-sorted so the row actually moves. Without that the icon fills and
+     nothing else happens, which reads as a pin that did not take. */
+  function handlePinned(quizId, isPinned) {
+    setQuizzes((current) =>
+      sortPinnedFirst(
+        current.map((quiz) => (quiz.id === quizId ? { ...quiz, isPinned } : quiz)),
+      ),
     )
   }
 
@@ -500,6 +520,7 @@ export default function Quizzes() {
                     quizzes={visibleQuizzes}
                     showDocument={false}
                     onRenamed={handleRenamed}
+                    onPinned={handlePinned}
                     onDeleted={handleDeleted}
                   />
                 )}
@@ -596,7 +617,7 @@ function DocumentCard({ document, quizCount, onOpen }) {
 /* Read from the database, so the same quizzes appear on any device. This used
    to be a list kept in this browser's local storage - the quizzes were always
    saved on the server, but nothing listed them. */
-function QuizList({ quizzes, showDocument, onRenamed, onDeleted }) {
+function QuizList({ quizzes, showDocument, onRenamed, onPinned, onDeleted }) {
   return (
     <ul className="space-y-2">
       {quizzes.map((quiz) => (
@@ -605,6 +626,7 @@ function QuizList({ quizzes, showDocument, onRenamed, onDeleted }) {
             quiz={quiz}
             showDocument={showDocument}
             onRenamed={onRenamed}
+            onPinned={onPinned}
             onDeleted={onDeleted}
           />
         </li>
@@ -614,12 +636,12 @@ function QuizList({ quizzes, showDocument, onRenamed, onDeleted }) {
 }
 
 /**
- * One quiz: open it, rename it, or delete it.
+ * One quiz: open it, pin it, rename it, or delete it.
  *
  * Renaming swaps the row for an input rather than opening a dialog - it is one
  * short field, and the row is where the name is being read from.
  */
-function QuizRow({ quiz, showDocument, onRenamed, onDeleted }) {
+function QuizRow({ quiz, showDocument, onRenamed, onPinned, onDeleted }) {
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(quiz.title)
   const [saving, setSaving] = useState(false)
@@ -712,6 +734,17 @@ function QuizRow({ quiz, showDocument, onRenamed, onDeleted }) {
           </span>
           <ChevronIcon className="h-4 w-4 shrink-0 text-faint" />
         </Link>
+
+        {/* Beside Rename and Delete, and before them: it is the one control
+            here that takes effect on the first click. */}
+        <PinButton
+          pinned={quiz.isPinned}
+          noun="quiz"
+          onToggle={async (next) => {
+            const updated = await setQuizPinned(quiz.id, next)
+            onPinned(quiz.id, updated.isPinned)
+          }}
+        />
 
         <div className="shrink-0 text-right">
           <button

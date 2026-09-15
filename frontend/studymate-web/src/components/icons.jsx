@@ -96,6 +96,31 @@ export function SparkIcon(props) {
   )
 }
 
+/**
+ * A pushpin, solid when pinned and outlined when not.
+ *
+ * The fill carries the state, because position cannot: at the top of a short
+ * list a pinned row looks exactly like any other row. The needle is drawn as
+ * a separate line, so filling the body does not thicken it.
+ */
+export function PinIcon({ filled = false, ...props }) {
+  return (
+    <svg {...base} {...props} fill="none" strokeLinejoin="round" strokeLinecap="round">
+      <g transform="translate(1.3 1.1) rotate(-40 10 10)">
+        {/* جسم الدبّوس */}
+        <path
+          d="M7.1 3.2v3.9L5.2 11.2h9.6L12.9 7.1V3.2z"
+          fill={filled ? 'currentColor' : 'none'}
+        />
+        {/* قبّعة الرأس */}
+        <path d="M6.1 3.2h7.8" />
+        {/* الإبرة */}
+        <path d="M10 11.2v5.6" />
+      </g>
+    </svg>
+  )
+}
+
 export function MicIcon(props) {
   return (
     <svg {...base} {...props}>

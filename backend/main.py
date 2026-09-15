@@ -198,13 +198,33 @@ class QuizCreateRequest(BaseModel):
 
 class QuizUpdateRequest(BaseModel):
     """
-    The only editable part of a saved quiz.
+    The editable parts of a saved quiz: its title and whether it
+    is pinned.
 
     The questions, the document behind them and every recorded
     attempt stay exactly as they are.
+
+    Both fields are optional because a rename and a pin arrive
+    separately - the pin control does not know or resend the
+    title. Sending neither is refused rather than treated as a
+    no-op; see update_quiz.
     """
 
-    title: str
+    title: str | None = None
+    is_pinned: bool | None = None
+
+
+class ConversationUpdateRequest(BaseModel):
+    """
+    The editable parts of a conversation, in the same shape as
+    QuizUpdateRequest so the two endpoints behave alike.
+
+    A conversation's title starts as the first question the
+    student asked, which is why it is worth being able to change.
+    """
+
+    title: str | None = None
+    is_pinned: bool | None = None
 
 
 class QuizAttemptRequest(BaseModel):
@@ -980,7 +1000,20 @@ def get_conversations(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Get all conversations belonging to the current user.
+    Get all conversations belonging to the current user,
+    pinned first and newest first within each group.
+
+    Pinning lifts a conversation to the top of the list it is
+    already in rather than moving it to a favourites page: the
+    web app groups these by document, and a favourites list would
+    cut across that grouping - two organising schemes for the
+    same rows, and two answers to "where is my conversation".
+    The column can grow into a cross-document view later if that
+    is ever wanted; a second list could not be simplified back
+    down.
+
+    The rows are Conversation objects, so is_pinned is part of
+    each one alongside title and created_at.
     """
 
     conversations = (
@@ -989,7 +1022,8 @@ def get_conversations(
             Conversation.user_id == current_user.id
         )
         .order_by(
-            Conversation.created_at.desc()
+            Conversation.is_pinned.desc(),
+            Conversation.created_at.desc(),
         )
         .all()
     )
@@ -1044,6 +1078,108 @@ def get_conversation(
         "conversation": conversation,
         "messages": messages,
     }
+
+# =========================================================
+# UPDATE CONVERSATION - RENAME OR PIN
+# =========================================================
+
+@app.patch(
+    "/conversations/{conversation_id}"
+)
+def update_conversation(
+    conversation_id: UUID,
+    update_data: ConversationUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Rename a conversation, pin it, or both.
+
+    The same shape as update_quiz, deliberately: the web app
+    drives both from the same kind of row control, and two
+    endpoints that differ only in wording would be two things to
+    remember.
+
+    A conversation's title is set automatically from the first
+    question asked, which is a reasonable guess and often not
+    what the student would have called it - hence the rename.
+    """
+
+    conversation = (
+        db.query(Conversation)
+        .filter(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not conversation:
+        raise HTTPException(
+            status_code=404,
+            detail="Conversation not found",
+        )
+
+    # -----------------------------------------------------
+    # What was actually sent
+    # -----------------------------------------------------
+    #
+    # A PATCH with neither field cannot be what the caller meant,
+    # so it is reported rather than absorbed silently as a no-op -
+    # the same judgement update_quiz makes.
+
+    if (
+        update_data.title is None
+        and update_data.is_pinned is None
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Send a title, is_pinned, or both"
+            ),
+        )
+
+    if update_data.title is not None:
+
+        new_title = update_data.title.strip()
+
+        if not new_title:
+            raise HTTPException(
+                status_code=400,
+                detail="Title cannot be empty",
+            )
+
+        conversation.title = new_title
+
+    if update_data.is_pinned is not None:
+        conversation.is_pinned = update_data.is_pinned
+
+    db.commit()
+    db.refresh(conversation)
+
+    return {
+        "message": "Conversation updated successfully",
+        "conversation": {
+            "id": str(conversation.id),
+
+            "title": conversation.title,
+
+            "is_pinned": conversation.is_pinned,
+
+            "document_id": (
+                str(conversation.document_id)
+                if conversation.document_id
+                else None
+            ),
+
+            "created_at": (
+                conversation.created_at.isoformat()
+                if conversation.created_at
+                else None
+            ),
+        },
+    }
+
 
 # =========================================================
 # DELETE CONVERSATION
@@ -1379,13 +1515,24 @@ def list_quizzes(
     one per quiz.
     """
 
+    # Pinned first, then newest first inside each group.
+    #
+    # Pinning lifts a quiz to the top of the list it is already
+    # in rather than moving it to a favourites page: this list is
+    # grouped by document, and a favourites list would cut across
+    # that grouping - two organising schemes for the same rows,
+    # and two answers to "where is my quiz". The column could
+    # grow into a cross-document view later if that is ever
+    # wanted; a second list could not be simplified back down.
+
     quizzes = (
         db.query(Quiz)
         .filter(
             Quiz.user_id == current_user.id
         )
         .order_by(
-            Quiz.created_at.desc()
+            Quiz.is_pinned.desc(),
+            Quiz.created_at.desc(),
         )
         .all()
     )
@@ -1465,6 +1612,8 @@ def list_quizzes(
                 "id": str(quiz.id),
 
                 "title": quiz.title,
+
+                "is_pinned": quiz.is_pinned,
 
                 "document_id": (
                     str(quiz.document_id)
@@ -2120,7 +2269,7 @@ def get_quiz_attempt(
     }
 
 # =========================================================
-# RENAME QUIZ
+# UPDATE QUIZ - RENAME OR PIN
 # =========================================================
 
 @app.patch(
@@ -2133,13 +2282,17 @@ def update_quiz(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Rename a quiz.
+    Rename a quiz, pin it, or both.
 
-    PATCH rather than PUT: only the title is sent, and only the
-    title changes. The questions, the document they came from
-    and every recorded attempt are neither sent nor replaced, so
-    this is not a full representation of the quiz and PUT would
-    claim it was.
+    PATCH rather than PUT: only the fields being changed are
+    sent. The questions, the document they came from and every
+    recorded attempt are neither sent nor replaced, so this is
+    not a full representation of the quiz and PUT would claim it
+    was.
+
+    The two fields arrive independently - the pin control has no
+    reason to know the title, and the rename form has no reason
+    to know the pin - so either may be omitted.
     """
 
     quiz = (
@@ -2157,24 +2310,49 @@ def update_quiz(
             detail="Quiz not found",
         )
 
-    new_title = update_data.title.strip()
+    # -----------------------------------------------------
+    # What was actually sent
+    # -----------------------------------------------------
+    #
+    # A PATCH with neither field is refused rather than quietly
+    # succeeding. It cannot be what the caller meant, and a 200
+    # for it would hide the bug that produced it.
 
-    if not new_title:
+    if (
+        update_data.title is None
+        and update_data.is_pinned is None
+    ):
         raise HTTPException(
             status_code=400,
-            detail="Title cannot be empty",
+            detail=(
+                "Send a title, is_pinned, or both"
+            ),
         )
 
-    quiz.title = new_title
+    if update_data.title is not None:
+
+        new_title = update_data.title.strip()
+
+        if not new_title:
+            raise HTTPException(
+                status_code=400,
+                detail="Title cannot be empty",
+            )
+
+        quiz.title = new_title
+
+    if update_data.is_pinned is not None:
+        quiz.is_pinned = update_data.is_pinned
 
     db.commit()
     db.refresh(quiz)
 
     return {
-        "message": "Quiz renamed successfully",
+        "message": "Quiz updated successfully",
         "quiz": {
             "id": str(quiz.id),
             "title": quiz.title,
+            "is_pinned": quiz.is_pinned,
         },
     }
 

@@ -169,12 +169,13 @@ function pageNumberOrNull(value) {
 }
 
 /**
- * GET /quizzes -> { quizzes: [ { id, title, document_id, document_title,
- *                               questions_count, attempts_count,
- *                               created_at } ] }
+ * GET /quizzes -> { quizzes: [ { id, title, is_pinned, document_id,
+ *                               document_title, questions_count,
+ *                               attempts_count, created_at } ] }
  *
- * Newest first, from the database. This replaced a list kept in the
- * browser's local storage, which was lost on any other device.
+ * Pinned first, then newest first within each group, from the database. This
+ * replaced a list kept in the browser's local storage, which was lost on any
+ * other device - and the pin lives in the database for the same reason.
  */
 export async function listQuizzes() {
   const { data } = await client.get('/quizzes')
@@ -183,6 +184,9 @@ export async function listQuizzes() {
   return rows.map((row) => ({
     id: String(row?.id ?? ''),
     title: row?.title || 'Untitled quiz',
+    /* Always a boolean: a backend from before the column existed sends
+       nothing, which reads as unpinned rather than as undefined. */
+    isPinned: Boolean(row?.is_pinned),
     documentId: row?.document_id ?? null,
     documentTitle: row?.document_title ?? null,
     questionsCount: numberOrNull(row?.questions_count),
@@ -192,21 +196,33 @@ export async function listQuizzes() {
 }
 
 /**
- * PATCH /quizzes/{quiz_id} - JSON { title }.
- *   -> { message, quiz: { id, title } }
+ * PATCH /quizzes/{quiz_id} - JSON { title?, is_pinned? }.
+ *   -> { message, quiz: { id, title, is_pinned } }
  *
- * PATCH, not PUT: the title is the only part of a quiz that is sent, and the
- * questions and attempts are left exactly as they were.
+ * PATCH, not PUT: only the fields being changed are sent, and the questions
+ * and attempts are left exactly as they were. Sending neither field is a 400,
+ * so the two callers below each send exactly one.
  */
-export async function renameQuiz(quizId, title) {
-  const { data } = await client.patch(`/quizzes/${quizId}`, { title })
+async function patchQuiz(quizId, payload) {
+  const { data } = await client.patch(`/quizzes/${quizId}`, payload)
   const quiz = data?.quiz ?? {}
 
   return {
     id: String(quiz.id ?? quizId),
-    title: quiz.title ?? title,
+    title: quiz.title ?? null,
+    isPinned: Boolean(quiz.is_pinned),
     message: data?.message ?? null,
   }
+}
+
+export async function renameQuiz(quizId, title) {
+  const updated = await patchQuiz(quizId, { title })
+  return { ...updated, title: updated.title ?? title }
+}
+
+/** Pin or unpin, which is what moves the row to the top of its group. */
+export async function setQuizPinned(quizId, isPinned) {
+  return patchQuiz(quizId, { is_pinned: Boolean(isPinned) })
 }
 
 /** DELETE /quizzes/{quiz_id} - also removes its questions and attempts. */

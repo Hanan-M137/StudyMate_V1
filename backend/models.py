@@ -1,6 +1,7 @@
 import uuid
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     ForeignKey,
@@ -278,7 +279,16 @@ class Conversation(Base):
         server_default=func.now(),
     )
 
-
+    # A pinned conversation is listed before the unpinned ones
+    # inside its document's group, and nowhere else. The column
+    # exists so that the pin survives a reload and reaches every
+    # device - a pin kept in the browser is not a pin.
+    is_pinned = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
 
     # Relationships
     user = relationship(
@@ -393,6 +403,16 @@ class Quiz(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+    )
+
+    # The same idea as Conversation.is_pinned: pinned quizzes rise
+    # to the top of the list they are already in, rather than
+    # moving to a favourites page of their own.
+    is_pinned = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
     )
 
     # Relationships
