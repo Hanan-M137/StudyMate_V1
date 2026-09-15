@@ -95,3 +95,12 @@ export function SparkIcon(props) {
     </svg>
   )
 }
+
+export function MicIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M10 2.75a2 2 0 0 1 2 2v5a2 2 0 0 1-4 0v-5a2 2 0 0 1 2-2Z" />
+      <path d="M5.25 9.25v.75a4.75 4.75 0 0 0 9.5 0v-.75M10 14.75v2.5M7.75 17.25h4.5" />
+    </svg>
+  )
+}

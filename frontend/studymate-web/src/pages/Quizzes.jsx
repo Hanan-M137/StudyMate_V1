@@ -4,6 +4,7 @@ import { listDocuments, isReady } from '../api/documents'
 import { createQuiz, deleteQuiz, listQuizzes, renameQuiz } from '../api/quizzes'
 import { getErrorMessage } from '../lib/errors'
 import PageHeader from '../components/PageHeader'
+import VoiceInput from '../components/VoiceInput'
 import { ChevronIcon, DocumentIcon, QuizIcon } from '../components/icons'
 import {
   Button,
@@ -427,14 +428,22 @@ export default function Quizzes() {
                     What should it focus on?{' '}
                     <span className="font-normal text-faint">(optional)</span>
                   </label>
-                  <textarea
-                    id="quiz-description"
-                    rows={3}
-                    value={description}
-                    placeholder="For example: the rules of building the imperative verb, not the vocabulary"
-                    onChange={(event) => setDescription(event.target.value)}
-                    className="w-full rounded-sm border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-faint focus:border-accent focus:outline-none"
-                  />
+                  {/* Typing and speaking fill the same field, so the
+                      microphone sits beside the box rather than under a
+                      heading of its own. It renders nothing at all in a
+                      browser without the speech API, which is why there is
+                      no fallback to arrange here. */}
+                  <div className="flex flex-wrap items-start gap-3">
+                    <textarea
+                      id="quiz-description"
+                      rows={3}
+                      value={description}
+                      placeholder="For example: the rules of building the imperative verb, not the vocabulary"
+                      onChange={(event) => setDescription(event.target.value)}
+                      className="min-w-64 flex-1 rounded-sm border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-faint focus:border-accent focus:outline-none"
+                    />
+                    <VoiceInput value={description} onChange={setDescription} />
+                  </div>
                   <p className="type-micro mt-1.5 text-faint">
                     Used while generating, then discarded. It is not saved with the quiz.
                   </p>

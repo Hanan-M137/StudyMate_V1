@@ -95,18 +95,39 @@ export default function QuizTake() {
 
   return (
     <div>
-      <header className="mb-6">
-        <Link
-          to="/quizzes"
-          className="type-micro font-medium text-muted transition-colors hover:text-ink"
-        >
-          &larr; All quizzes
-        </Link>
-        <h1 className="type-display mt-1.5">{quiz.title}</h1>
-        <p className="type-small mt-1 text-muted">
-          {questions.length} {questions.length === 1 ? 'question' : 'questions'} &middot; mixed
-          question types
-        </p>
+      {/* The whole screen header is chrome: the printed sheet gets its own
+          header below, so nothing here has to survive onto paper. */}
+      <header className="no-print mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <Link
+            to="/quizzes"
+            className="type-micro font-medium text-muted transition-colors hover:text-ink"
+          >
+            &larr; All quizzes
+          </Link>
+          <h1 className="type-display mt-1.5">{quiz.title}</h1>
+          <p className="type-small mt-1 text-muted">
+            {questions.length} {questions.length === 1 ? 'question' : 'questions'} &middot; mixed
+            question types
+          </p>
+        </div>
+
+        {/* window.print() and nothing else. The browser's own dialog already
+            offers "Save as PDF", so there is no library here, no second route
+            and no request to the backend - and what prints is whatever this
+            page is showing, which is the point: a worksheet before the quiz
+            is submitted, the marked paper after. */}
+        <Button size="lg" onClick={() => window.print()}>
+          Print
+        </Button>
+      </header>
+
+      {/* Paper only. The title and the date, and deliberately nothing else -
+          no URL, no app name, no "printed from". The date is the day it was
+          printed, which is the only date a worksheet needs. */}
+      <header className="print-only print-header">
+        <h1 className="type-display">{quiz.title}</h1>
+        <p className="type-small mt-1 text-muted">{formatPrintDate()}</p>
       </header>
 
       {result ? <ScoreCard result={result} questionCount={questions.length} /> : null}
@@ -114,7 +135,7 @@ export default function QuizTake() {
       <AttemptsTable quizId={quizId} attempts={attempts} />
 
       {!result && questions.length > 0 ? (
-        <div className="sticky top-0 z-10 -mx-4 mb-6 border-b border-line bg-paper/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10">
+        <div className="no-print sticky top-0 z-10 -mx-4 mb-6 border-b border-line bg-paper/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10">
           <div className="type-micro mb-1.5 flex items-center justify-between text-muted">
             <span>
               {answeredCount} of {questions.length} answered
@@ -167,7 +188,7 @@ export default function QuizTake() {
           <InlineError message={submitError} />
 
           {!result ? (
-            <div className="flex flex-wrap items-center gap-3 pt-1">
+            <div className="no-print flex flex-wrap items-center gap-3 pt-1">
               <Button type="submit" size="lg" loading={submitting} disabled={answeredCount === 0}>
                 Submit answers
               </Button>
@@ -178,7 +199,7 @@ export default function QuizTake() {
               ) : null}
             </div>
           ) : (
-            <div className="flex flex-wrap gap-2 pt-1">
+            <div className="no-print flex flex-wrap gap-2 pt-1">
               <Button
                 variant="secondary"
                 onClick={() => {
@@ -215,7 +236,7 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
       as="fieldset"
       disabled={locked}
       className={cx(
-        'px-4 py-4 sm:px-6 sm:py-5',
+        'print-question px-4 py-4 sm:px-6 sm:py-5',
         state === 'correct' && 'border-accent-line',
         /* Only accent/danger/neutral tones are known to exist in the design
            system, so partial borrows the strong neutral border rather than a
@@ -262,7 +283,7 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
             rows={3}
             placeholder="Type your answer"
             onChange={(event) => onChange(event.target.value)}
-            className="w-full rounded-sm border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-faint focus:border-accent focus:outline-none disabled:opacity-70"
+            className="print-answer-box w-full rounded-sm border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-faint focus:border-accent focus:outline-none disabled:opacity-70"
           />
           <p className="type-micro mt-1.5 text-faint">
             {question.isKnownType
@@ -288,6 +309,14 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
                 key={option.key}
                 className={cx(
                   'flex cursor-pointer items-start gap-3 rounded-sm border px-3.5 py-2.5 transition-colors duration-150',
+                  /* Chosen and correct are said with a background tint here,
+                     and a printer is free to drop it. These three classes are
+                     where the print stylesheet re-states them as borders; the
+                     filled circle and the words "Correct answer" below carry
+                     the same two facts without any colour at all. */
+                  'print-option',
+                  selected && 'print-option-chosen',
+                  isCorrectOption && 'print-option-correct',
                   isCorrectOption
                     ? 'border-accent bg-accent-soft'
                     : selected && state === 'incorrect'
@@ -310,8 +339,10 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
                 <span
                   aria-hidden="true"
                   className={cx(
-                    'mt-0.5 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full border',
-                    selected ? 'border-accent bg-accent' : 'border-line-strong bg-surface',
+                    'print-radio mt-0.5 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full border',
+                    selected
+                      ? 'print-radio-filled border-accent bg-accent'
+                      : 'border-line-strong bg-surface',
                   )}
                 >
                   {selected ? <span className="h-1.5 w-1.5 rounded-full bg-on-accent" /> : null}
@@ -366,7 +397,7 @@ function Feedback({ feedback, isFreeText }) {
         : 'Incorrect'
 
   return (
-    <div className={cx('mt-4 flex items-start gap-2.5 rounded-sm px-3.5 py-2.5', tone)}>
+    <div className={cx('print-verdict mt-4 flex items-start gap-2.5 rounded-sm px-3.5 py-2.5', tone)}>
       {verdict === 'incorrect' ? (
         <CloseIcon className="mt-0.5 h-4 w-4 shrink-0" />
       ) : (
@@ -443,8 +474,10 @@ function AttemptsTable({ quizId, attempts }) {
 
   if (!attempts || attempts.length === 0) return null
 
+  /* Screen only: a printed sheet is one attempt, and a history of the others
+     printed underneath it would put old answers on the same paper. */
   return (
-    <section className="mb-7">
+    <section className="no-print mb-7">
       <h2 className="type-eyebrow mb-3">Previous attempts</h2>
 
       {/* A table is the one thing allowed to be wider than the page, so it
@@ -602,6 +635,19 @@ function describeAnswer(question, value) {
   return raw
 }
 
+/**
+ * The date on the printed sheet. Read at render time rather than kept in
+ * state: the page is not open long enough for the day to turn, and a stale
+ * date on a worksheet is worse than no date.
+ */
+function formatPrintDate() {
+  return new Date().toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  })
+}
+
 function formatDateTime(value) {
   if (!value) return null
   const date = new Date(value)
@@ -623,7 +669,7 @@ function ScoreCard({ result, questionCount }) {
   const dash = percentage != null ? (percentage / 100) * circumference : 0
 
   return (
-    <section className="mb-7 rounded-xl border border-line bg-surface px-5 py-5 shadow-raised sm:px-7">
+    <section className="print-score mb-7 rounded-xl border border-line bg-surface px-5 py-5 shadow-raised sm:px-7">
       <div className="flex flex-wrap items-center gap-6">
         <div className="relative h-24 w-24 shrink-0">
           <svg viewBox="0 0 80 80" className="h-24 w-24 -rotate-90" aria-hidden="true">

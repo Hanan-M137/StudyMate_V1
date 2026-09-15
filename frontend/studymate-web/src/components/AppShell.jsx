@@ -34,16 +34,19 @@ export default function AppShell() {
   }
 
   return (
-    <div className="min-h-full lg:grid lg:grid-cols-[16rem_1fr]">
+    /* `app-shell` is a print hook, not a style: the two-column grid has to
+       collapse once the sidebar is hidden, or the content prints inside the
+       16rem track the sidebar left behind. See @media print in index.css. */
+    <div className="app-shell min-h-full lg:grid lg:grid-cols-[16rem_1fr]">
       <a
         href="#main"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-sm focus:bg-surface focus:px-4 focus:py-2 focus:shadow-pop"
+        className="no-print sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-sm focus:bg-surface focus:px-4 focus:py-2 focus:shadow-pop"
       >
         Skip to content
       </a>
 
       {/* Mobile bar */}
-      <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-paper/95 px-4 py-3 backdrop-blur lg:hidden">
+      <header className="no-print sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-paper/95 px-4 py-3 backdrop-blur lg:hidden">
         <button
           type="button"
           onClick={() => setMobileNavOpen((open) => !open)}
@@ -58,7 +61,7 @@ export default function AppShell() {
       </header>
 
       {mobileNavOpen ? (
-        <div className="fixed inset-0 z-40 lg:hidden">
+        <div className="no-print fixed inset-0 z-40 lg:hidden">
           <div
             className="absolute inset-0 bg-ink/35"
             onClick={() => setMobileNavOpen(false)}
@@ -87,7 +90,7 @@ export default function AppShell() {
       ) : null}
 
       {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-screen flex-col border-r border-line bg-surface lg:flex">
+      <aside className="no-print sticky top-0 hidden h-screen flex-col border-r border-line bg-surface lg:flex">
         <div className="px-5 py-5">
           <Wordmark />
         </div>

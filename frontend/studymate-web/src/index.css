@@ -102,6 +102,12 @@
     max-width: 65ch;
   }
 
+  /* Hidden until the page is printed - see the @media print block at the
+     bottom of this file, which is the only thing that reveals it. */
+  .print-only {
+    display: none;
+  }
+
   .type-display {
     font-family: var(--font-display);
     font-size: clamp(1.5rem, 1.2rem + 1.2vw, 1.9rem);
@@ -178,5 +184,171 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* ==========================================================================
+   Print - a quiz on paper.
+
+   The same page prints two different documents, and which one comes out is
+   decided by state the page already holds rather than by a second renderer:
+   before an attempt is submitted the page has never been sent a correct
+   answer, so the worksheet is simply this page with the chrome removed;
+   after it is submitted the same markup is already carrying the marks.
+
+   This block lives here rather than in QuizTake.jsx because half of what has
+   to disappear - the sidebar, the mobile bar, the account row - belongs to
+   AppShell, not to the quiz page.
+   ========================================================================== */
+@media print {
+  @page {
+    margin: 16mm;
+  }
+
+  /* ---- Colour ------------------------------------------------------------
+     Browsers drop background colours when printing, and several things on
+     the quiz page say what they mean with a background alone. Asking for
+     them back is the first half of the fix; the borders and words added
+     further down are the half that still works on a black-and-white
+     printer. */
+  *,
+  *::before,
+  *::after {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* The warm paper tint is an identity, not information, and a full-bleed
+     wash of it costs real ink. */
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  /* ---- Chrome ------------------------------------------------------------ */
+
+  /* Navigation, controls and history: useful on screen, noise on paper. */
+  .no-print {
+    display: none !important;
+  }
+
+  /* Every button, wherever it lives. A sheet of paper cannot be clicked, so
+     one that survives the print only looks like a mistake. */
+  button {
+    display: none !important;
+  }
+
+  /* The counterpart: markup that exists only for the printed sheet. */
+  .print-only {
+    display: block !important;
+  }
+
+  /* The shell is a two-column grid on screen. Hiding the sidebar takes it
+     out of the flow but not its 16rem track, which would squeeze the whole
+     quiz into the narrow column, so the shell collapses to plain flow. */
+  .app-shell {
+    display: block !important;
+  }
+
+  #main {
+    padding: 0 !important;
+  }
+
+  /* The reading measure is set for a screen at arm's length; a sheet of A4
+     is narrower than the cap anyway. */
+  #main > div,
+  .measure {
+    max-width: none !important;
+  }
+
+  /* ---- The printed header ------------------------------------------------ */
+
+  .print-header {
+    margin-bottom: 1.25rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #000;
+  }
+
+  /* ---- Keeping a question whole ------------------------------------------ */
+
+  /* A question broken over a page boundary is unreadable: the stem on one
+     sheet and the options it belongs to on the next. */
+  .print-question,
+  .print-score,
+  .print-verdict {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print-question,
+  .print-score {
+    box-shadow: none !important;
+  }
+
+  /* The screen border is a pale beige chosen to be almost invisible, which
+     on paper it simply is. Its job here is structural - it groups one
+     question - and not to report the verdict, which the band inside the
+     card states in words. */
+  .print-question {
+    border: 1px solid #a0a0a0 !important;
+    margin-bottom: 0.6rem;
+  }
+
+  /* ---- Options in ink ---------------------------------------------------- */
+
+  .print-option {
+    border: 1px solid #a0a0a0 !important;
+  }
+
+  /* Chosen and correct are the two facts a marked paper has to carry. Both
+     get a border heavy enough to survive greyscale, and each already has a
+     second, wordless-printer-proof signal: a filled circle for the chosen
+     one, the words "Correct answer" beside the correct one. */
+  .print-option-chosen,
+  .print-option-correct {
+    border: 2px solid #000 !important;
+  }
+
+  /* ---- The radio circles -------------------------------------------------- */
+
+  /* The real input is sr-only and a styled span stands in for it, so the
+     span is the only thing that can reach the page. Empty circles on an
+     unanswered worksheet are what the student writes into. */
+  .print-radio {
+    border: 1.5px solid #000 !important;
+    background: #fff !important;
+  }
+
+  .print-radio-filled {
+    background: #000 !important;
+  }
+
+  /* The white pip inside reads as a ring once the ring itself is black, so
+     a chosen option prints as a solid disc instead. */
+  .print-radio-filled > * {
+    display: none !important;
+  }
+
+  /* ---- Written answers ---------------------------------------------------- */
+
+  /* Before submission this textarea is empty, and an empty textarea prints
+     as a hairline. Three lines is the room the stored correct answers - 16.9
+     words on average, the same measurement that made this a textarea rather
+     than an input - need when they are written by hand. */
+  .print-answer-box {
+    min-height: 4.5rem !important;
+    border: 1px solid #000 !important;
+    background: #fff !important;
+    color: #000 !important;
+    resize: none;
+  }
+
+  /* ---- The verdict band ---------------------------------------------------- */
+
+  /* On screen the band's tint is most of the signal. On paper the word
+     inside it - Correct / Partially correct / Incorrect - is, and the border
+     is what separates it from the question above. */
+  .print-verdict {
+    border: 1px solid #000 !important;
   }
 }
