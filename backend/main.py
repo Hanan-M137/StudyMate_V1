@@ -187,6 +187,25 @@ class QuizCreateRequest(BaseModel):
     # discarded - it is not stored with the quiz.
     description: str | None = None
 
+    # Restrict generation to part of the document. These are the
+    # PDF's own page numbers, counted from the first physical
+    # page of the file, which is often not the number printed on
+    # the page. Both or neither: half a range is a mistake, not
+    # an open end, and is rejected rather than guessed at.
+    start_page: int | None = None
+    end_page: int | None = None
+
+
+class QuizUpdateRequest(BaseModel):
+    """
+    The only editable part of a saved quiz.
+
+    The questions, the document behind them and every recorded
+    attempt stay exactly as they are.
+    """
+
+    title: str
+
 
 class QuizAttemptRequest(BaseModel):
     """
@@ -1171,6 +1190,94 @@ def create_quiz(
             )
 
     # -----------------------------------------------------
+    # Enough questions to go round
+    # -----------------------------------------------------
+    #
+    # Every type the student picked gets at least one question,
+    # so a quiz cannot have fewer questions than types picked.
+    # Only types that were actually named count: omitting the
+    # list is not a request for all three, it is the absence of
+    # a preference, and the generator narrows its default to fit
+    # the count rather than failing.
+    #
+    # Refused here rather than in the generator so the answer
+    # comes back at once, instead of after a request to Claude
+    # that was never going to work.
+
+    requested_types = sorted(set(quiz_data.question_types or []))
+
+    if quiz_data.num_questions < len(requested_types):
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{quiz_data.num_questions} question(s) is not "
+                f"enough for {len(requested_types)} question "
+                f"type(s): each type you pick needs at least "
+                f"one question."
+            ),
+        )
+
+    # -----------------------------------------------------
+    # Validate the page range
+    # -----------------------------------------------------
+    #
+    # Half a range is refused rather than completed: someone who
+    # gave a first page and no last page may have meant "to the
+    # end" or may simply not have finished typing, and quietly
+    # choosing one of those builds a quiz from the wrong pages
+    # with nothing to show that it happened.
+
+    start_page = quiz_data.start_page
+    end_page = quiz_data.end_page
+
+    if (start_page is None) != (end_page is None):
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Give both a first and a last page, or neither."
+            ),
+        )
+
+    if start_page is not None:
+
+        if start_page < 1:
+
+            raise HTTPException(
+                status_code=400,
+                detail="The first page must be 1 or greater.",
+            )
+
+        if end_page < start_page:
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "The last page cannot come before the first "
+                    "page."
+                ),
+            )
+
+        # A first page past the end of the document has nothing
+        # behind it at all. The last page is left alone: pages
+        # 90 to 200 of a 120 page document is a reasonable way
+        # to say "to the end", and it still selects real pages.
+
+        if (
+            document.page_count
+            and start_page > document.page_count
+        ):
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"This document has {document.page_count} "
+                    f"pages, so it has no page {start_page}."
+                ),
+            )
+
+    # -----------------------------------------------------
     # Create Quiz record
     # -----------------------------------------------------
 
@@ -1189,12 +1296,14 @@ def create_quiz(
 
     try:
 
-        generated_questions = generate_quiz(
+        generated_questions, warnings = generate_quiz(
             db=db,
             quiz=quiz,
             question_count=quiz_data.num_questions,
             question_types=quiz_data.question_types,
             description=quiz_data.description,
+            start_page=start_page,
+            end_page=end_page,
         )
 
     except ValueError as error:
@@ -1231,12 +1340,18 @@ def create_quiz(
     # Return result
     # -----------------------------------------------------
 
+    # warnings is empty for a quiz that is exactly what was
+    # asked for. When it is not, it says what the quiz did not
+    # manage to be - a question type that produced nothing, say
+    # - in words meant for the student rather than a log file.
+
     return {
         "message": "Quiz created successfully",
         "quiz_id": str(quiz.id),
         "questions_count": len(
             generated_questions
         ),
+        "warnings": warnings,
     }
 
 # =========================================================
@@ -2003,6 +2118,66 @@ def get_quiz_attempt(
 
         "questions": rows,
     }
+
+# =========================================================
+# RENAME QUIZ
+# =========================================================
+
+@app.patch(
+    "/quizzes/{quiz_id}"
+)
+def update_quiz(
+    quiz_id: UUID,
+    update_data: QuizUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Rename a quiz.
+
+    PATCH rather than PUT: only the title is sent, and only the
+    title changes. The questions, the document they came from
+    and every recorded attempt are neither sent nor replaced, so
+    this is not a full representation of the quiz and PUT would
+    claim it was.
+    """
+
+    quiz = (
+        db.query(Quiz)
+        .filter(
+            Quiz.id == quiz_id,
+            Quiz.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not quiz:
+        raise HTTPException(
+            status_code=404,
+            detail="Quiz not found",
+        )
+
+    new_title = update_data.title.strip()
+
+    if not new_title:
+        raise HTTPException(
+            status_code=400,
+            detail="Title cannot be empty",
+        )
+
+    quiz.title = new_title
+
+    db.commit()
+    db.refresh(quiz)
+
+    return {
+        "message": "Quiz renamed successfully",
+        "quiz": {
+            "id": str(quiz.id),
+            "title": quiz.title,
+        },
+    }
+
 
 # =========================================================
 # DELETE QUIZ

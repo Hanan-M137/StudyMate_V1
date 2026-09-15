@@ -1209,6 +1209,17 @@ QUESTION_TYPES = (
 )
 
 
+# How each type is named when it is written to a student. The
+# stored values are machine names; "short_answer questions were
+# not produced" is not a sentence anyone wants to read.
+
+QUESTION_TYPE_LABELS = {
+    "multiple_choice": "multiple choice",
+    "true_false": "true/false",
+    "short_answer": "short answer",
+}
+
+
 # The JSON shape shown to Claude for each type. Only the shapes
 # for the requested types are sent: showing the shape of a type
 # that is not wanted is an invitation to produce it.
@@ -1289,6 +1300,46 @@ def resolve_question_types(question_types) -> list[str]:
     ]
 
     return resolved or list(QUESTION_TYPES)
+
+
+def distribute_question_types(
+    question_count: int,
+    types: list[str],
+) -> dict[str, int]:
+    """
+    Split question_count across types as evenly as possible.
+
+    The remainder goes to the earlier types, so eight questions
+    over three types is 3 / 3 / 2 rather than an arbitrary
+    scattering. The order is the one resolve_question_types
+    produces, which is stable.
+
+    Raises ValueError if types is empty, or if there are fewer
+    questions than types - every type that was asked for needs
+    at least one question, and there is no honest way to give a
+    type zero questions while still calling it included.
+    """
+
+    if not types:
+
+        raise ValueError(
+            "At least one question type is required."
+        )
+
+    if question_count < len(types):
+
+        raise ValueError(
+            f"{question_count} question(s) cannot cover "
+            f"{len(types)} question type(s): each type needs "
+            f"at least one question."
+        )
+
+    base, remainder = divmod(question_count, len(types))
+
+    return {
+        name: base + (1 if index < remainder else 0)
+        for index, name in enumerate(types)
+    }
 
 
 # =========================================================
@@ -1392,6 +1443,34 @@ Rules:
 
     resolved_types = resolve_question_types(question_types)
 
+    # When no types were named, the three are a default rather
+    # than a request: nobody asked for a true/false question. A
+    # default has to fit the count, so it is trimmed to what the
+    # count can carry - one question means one type. An explicit
+    # list is never trimmed; too few questions for the types the
+    # student actually picked is an error, and the call below
+    # raises it.
+
+    if not question_types:
+
+        resolved_types = resolved_types[:question_count]
+
+    # An exact count per type is a far stronger instruction than
+    # a list of type names. Asked only for a list, the model
+    # happily returns ten questions of one kind and none of
+    # another - every question is then "an allowed type" and the
+    # request is still not what arrived.
+
+    distribution = distribute_question_types(
+        question_count=question_count,
+        types=resolved_types,
+    )
+
+    distribution_lines = "\n".join(
+        f"  - {count} {name}"
+        for name, count in distribution.items()
+    )
+
     type_examples = "\n\n".join(
         QUESTION_TYPE_EXAMPLES[name]
         for name in resolved_types
@@ -1420,10 +1499,13 @@ TASK:
 Generate exactly {question_count}
 quiz questions from the document.
 
-Allowed question types: {", ".join(resolved_types)}
+Produce exactly this many questions of each type:
 
-Every question must use one of those types and no
-other.{focus_section}
+{distribution_lines}
+
+These counts are exact. Not one more and not one fewer of
+any listed type, and no question of a type that is not
+listed.{focus_section}
 
 Return ONLY a valid JSON array.
 
@@ -1877,12 +1959,24 @@ def generate_quiz(
     question_count: int = DEFAULT_QUESTION_COUNT,
     question_types: list[str] | None = None,
     description: str | None = None,
-) -> list[QuizQuestion]:
+    start_page: int | None = None,
+    end_page: int | None = None,
+) -> tuple[list[QuizQuestion], list[str]]:
     """
     Complete AI quiz generation pipeline.
 
     This is the single quiz-generation entry point
     used by the FastAPI endpoint in main.py.
+
+    start_page and end_page optionally restrict generation to
+    part of the document. Either may be given alone: a missing
+    start means the first page, a missing end means the last.
+
+    Returns (saved_questions, warnings). The warnings are
+    written for the student, not for a developer: they say what
+    the quiz did not manage to be, in a quiz that was still
+    worth saving. An empty list means the quiz is exactly what
+    was asked for.
 
     Flow:
 
@@ -1891,6 +1985,8 @@ def generate_quiz(
         Document
           ↓
         All Chunks
+          ↓
+        Restrict to the requested page range
           ↓
         Select limited/distributed Chunks
           ↓
@@ -1906,6 +2002,11 @@ def generate_quiz(
           ↓
         quiz_questions table
     """
+
+    # Collected as generation goes and handed back to the
+    # endpoint, which passes them on to the student.
+
+    warnings: list[str] = []
 
     # -----------------------------------------------------
     # Validate question count
@@ -1972,6 +2073,56 @@ def generate_quiz(
     )
 
     # -----------------------------------------------------
+    # Restrict to the requested page range
+    # -----------------------------------------------------
+    #
+    # These are the PDF's OWN page numbers, counted from the
+    # first physical page of the file. They are not the numbers
+    # printed on the page: a book whose printed page 1 is the
+    # twentieth sheet of the PDF is off by nineteen, and nothing
+    # in this code can tell the difference - a chunk carries the
+    # position of its page in the file and nothing else. The
+    # interface says so where the range is typed in; here it is
+    # taken at face value.
+
+    if start_page is not None or end_page is not None:
+
+        first_page = start_page if start_page is not None else 1
+
+        all_chunks = [
+            chunk
+            for chunk in all_chunks
+            if chunk.page_number is not None
+            and chunk.page_number >= first_page
+            and (
+                end_page is None
+                or chunk.page_number <= end_page
+            )
+        ]
+
+        range_label = (
+            f"{first_page} to {end_page}"
+            if end_page is not None
+            else f"{first_page} to the end of the document"
+        )
+
+        if not all_chunks:
+
+            raise ValueError(
+                f"No text was found on pages {range_label}. "
+                f"Those pages may be blank, or images with no "
+                f"text in them. Try a different range."
+            )
+
+        logger.info(
+            "Quiz %s: %d chunks remain after restricting to "
+            "pages %s.",
+            quiz.id,
+            len(all_chunks),
+            range_label,
+        )
+
+    # -----------------------------------------------------
     # Select limited quiz chunks
     # -----------------------------------------------------
 
@@ -2012,10 +2163,16 @@ def generate_quiz(
 
     resolved_types = resolve_question_types(question_types)
 
+    # The original list is passed down, not the resolved one:
+    # generate_quiz_with_claude needs to know whether the student
+    # actually named any types, and a resolved list is never empty
+    # so it can no longer tell. Passing the resolved list is what
+    # stopped a one-question quiz with no types from working -
+    # the trim inside it was unreachable.
     questions = generate_quiz_with_claude(
         context=context,
         question_count=question_count,
-        question_types=resolved_types,
+        question_types=question_types,
         description=description,
     )
 
@@ -2027,8 +2184,11 @@ def generate_quiz(
     # only short answers will still slip in a multiple choice
     # now and then, and a student who asked for one kind of
     # practice should not have to take another.
+    #
+    # Only when the types were named explicitly. A quiz that
+    # asked for nothing in particular accepts whatever came.
 
-    if len(resolved_types) < len(QUESTION_TYPES):
+    if question_types:
 
         allowed = set(resolved_types)
 
@@ -2041,14 +2201,25 @@ def generate_quiz(
             ).strip().lower() in allowed
         ]
 
-        if len(kept) != len(questions):
+        dropped = len(questions) - len(kept)
+
+        if dropped:
 
             logger.warning(
                 "Quiz %s: %d generated question(s) fell outside the "
                 "requested types %s and were dropped.",
                 quiz.id,
-                len(questions) - len(kept),
+                dropped,
                 ", ".join(resolved_types),
+            )
+
+            warnings.append(
+                f"{dropped} generated "
+                f"{'question was' if dropped == 1 else 'questions were'} "
+                f"not of a type you asked for and "
+                f"{'was' if dropped == 1 else 'were'} removed, so this "
+                f"quiz is shorter than the {question_count} you asked "
+                f"for."
             )
 
         if not kept:
@@ -2060,6 +2231,47 @@ def generate_quiz(
             )
 
         questions = kept
+
+        # A type that was asked for and never arrived is the
+        # quieter failure. Nothing looks wrong: the quiz opens,
+        # the questions are about the right material, the count
+        # is right. But a student who wanted written practice
+        # and got ten multiple-choice questions has a quiz that
+        # works and teaches the wrong thing. So it is said out
+        # loud rather than hidden - and not raised, because by
+        # this point a usable quiz exists, and throwing it away
+        # over a missing type would cost the student the whole
+        # generation and give them nothing in its place.
+
+        produced = {
+            str(
+                question.get("question_type", "")
+            ).strip().lower()
+            for question in questions
+        }
+
+        missing = [
+            name
+            for name in resolved_types
+            if name not in produced
+        ]
+
+        if missing:
+
+            logger.warning(
+                "Quiz %s: requested type(s) %s produced no "
+                "questions.",
+                quiz.id,
+                ", ".join(missing),
+            )
+
+            for name in missing:
+
+                warnings.append(
+                    f"No {QUESTION_TYPE_LABELS.get(name, name)} "
+                    f"questions were produced, although that type "
+                    f"was selected."
+                )
 
     # -----------------------------------------------------
     # Save questions
@@ -2077,7 +2289,7 @@ def generate_quiz(
         len(saved_questions),
     )
 
-    return saved_questions
+    return saved_questions, warnings
 
 
 # =========================================================

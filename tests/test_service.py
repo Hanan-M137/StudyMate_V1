@@ -20,6 +20,7 @@ from ai.service import (
     extract_page_text,
     extract_pdf_chunks,
     extract_text_in_reading_order,
+    extract_text_with_ocr,
     generate_quiz_with_claude,
     get_claude_model,
     save_quiz_questions,
@@ -451,7 +452,13 @@ def test_extract_text_with_ocr_returns_empty_string_when_tesseract_missing():
     fake_page = MagicMock()
     fake_page.get_pixmap.return_value.tobytes.return_value = b"fake-image-bytes"
 
+    # Image.open is patched too, because the fake page yields bytes
+    # that are not a real PNG - without this the test dies inside
+    # PIL, before reaching the line it means to exercise.
     with patch(
+        "ai.service.Image.open",
+        return_value=MagicMock(),
+    ), patch(
         "ai.service.pytesseract.image_to_string",
         side_effect=pytesseract.TesseractNotFoundError(),
     ):

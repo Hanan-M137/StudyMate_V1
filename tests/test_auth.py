@@ -196,9 +196,23 @@ def test_create_refresh_token_preserves_custom_claims():
 def test_decode_refresh_token_valid_token_returns_user_id():
     token = create_refresh_token({"sub": "user-123"})
 
-    result = decode_refresh_token(token)
+    user_id, token_version = decode_refresh_token(token)
 
-    assert result == "user-123"
+    assert user_id == "user-123"
+
+    # A token carrying no "ver" reads as version 0, which is what
+    # every user row starts at - so adding sign-out revocation
+    # did not invalidate the sessions that already existed.
+    assert token_version == 0
+
+
+def test_decode_refresh_token_returns_the_version_it_was_issued_with():
+    token = create_refresh_token({"sub": "user-123", "ver": 4})
+
+    user_id, token_version = decode_refresh_token(token)
+
+    assert user_id == "user-123"
+    assert token_version == 4
 
 
 def test_decode_refresh_token_rejects_access_token():

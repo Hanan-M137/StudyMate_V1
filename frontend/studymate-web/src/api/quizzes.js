@@ -5,11 +5,23 @@ import client from './client'
  * NOT guesses.
  *
  * POST /quizzes
- *   { message, quiz_id, questions_count }
+ *   { message, quiz_id, questions_count, warnings }
  *   -> there is no `id` and no `title`; the quiz id is `quiz_id`.
- *   -> `question_type` is OPTIONAL in the spec (required is ["document_id",
- *      "title"]) and the backend ignores it anyway - it always generates a mix.
- *      It is therefore not sent at all. `num_questions` IS respected.
+ *   -> `question_types` is a LIST and is respected: the backend is told how
+ *      many questions of each type to generate and discards anything else.
+ *      It replaced the old singular `question_type`, which the backend
+ *      accepted and then ignored - the quiz was always a mix regardless.
+ *      Omitting it means all three types. `num_questions` IS respected, and
+ *      must be at least as large as the number of types requested.
+ *   -> `description` is free text steering generation. It is NOT stored, so
+ *      it never comes back from any endpoint.
+ *   -> `start_page` / `end_page` restrict generation to part of the PDF, and
+ *      are sent both or not at all. They count from the first physical page
+ *      of the file, not from the number printed on the page.
+ *   -> `warnings` is a list of sentences for the student about what the quiz
+ *      did not manage to be - a requested type that produced no questions,
+ *      or questions dropped for being the wrong type. It is absent on older
+ *      backends and empty when the quiz is exactly what was asked for.
  *
  * GET /quizzes/{quiz_id}
  *   {
@@ -100,6 +112,9 @@ export function normaliseQuestion(raw, index = 0) {
  * `question_types` is a list; omitting it means all three. It replaced the
  * old singular `question_type`, which the backend accepted and ignored.
  * `description` steers generation and is not stored with the quiz.
+ *
+ * `startPage` / `endPage` are sent as a pair or not at all: the backend
+ * refuses half a range rather than assuming what the missing half meant.
  */
 export async function createQuiz({
   documentId,
@@ -107,6 +122,8 @@ export async function createQuiz({
   numQuestions,
   questionTypes,
   description,
+  startPage,
+  endPage,
 }) {
   const payload = {
     document_id: documentId,
@@ -122,6 +139,14 @@ export async function createQuiz({
     payload.description = description.trim()
   }
 
+  const first = pageNumberOrNull(startPage)
+  const last = pageNumberOrNull(endPage)
+
+  if (first != null && last != null) {
+    payload.start_page = first
+    payload.end_page = last
+  }
+
   const { data } = await client.post('/quizzes', payload)
 
   return {
@@ -129,7 +154,18 @@ export async function createQuiz({
     title,
     questionsCount: data?.questions_count ?? null,
     message: data?.message ?? null,
+    /* Always an array, so callers can read `.length` without checking: a
+       backend that does not send warnings has none to send. */
+    warnings: Array.isArray(data?.warnings) ? data.warnings.map(String) : [],
   }
+}
+
+/** A page number the backend will accept, or null for anything else. */
+function pageNumberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed)) return null
+  return parsed
 }
 
 /**
@@ -153,6 +189,24 @@ export async function listQuizzes() {
     attemptsCount: numberOrNull(row?.attempts_count),
     createdAt: row?.created_at ?? null,
   }))
+}
+
+/**
+ * PATCH /quizzes/{quiz_id} - JSON { title }.
+ *   -> { message, quiz: { id, title } }
+ *
+ * PATCH, not PUT: the title is the only part of a quiz that is sent, and the
+ * questions and attempts are left exactly as they were.
+ */
+export async function renameQuiz(quizId, title) {
+  const { data } = await client.patch(`/quizzes/${quizId}`, { title })
+  const quiz = data?.quiz ?? {}
+
+  return {
+    id: String(quiz.id ?? quizId),
+    title: quiz.title ?? title,
+    message: data?.message ?? null,
+  }
 }
 
 /** DELETE /quizzes/{quiz_id} - also removes its questions and attempts. */
