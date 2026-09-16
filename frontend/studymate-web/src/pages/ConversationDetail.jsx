@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { getConversation } from '../api/conversations'
 import { useI18n } from '../context/I18nContext'
+import { dateLocale } from '../lib/language'
 import { getErrorMessage } from '../lib/errors'
 import { MessageBubble } from './DocumentChat'
 import { formatDate } from './Conversations'
@@ -9,7 +10,7 @@ import { EmptyState, ErrorState, LoadingState } from '../components/ui'
 
 export default function ConversationDetail() {
   const { id } = useParams()
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [conversation, setConversation] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -20,7 +21,7 @@ export default function ConversationDetail() {
     try {
       setConversation(await getConversation(id))
     } catch (err) {
-      setError(getErrorMessage(err, t('conversations.couldNotLoadDetail')))
+      setError(getErrorMessage(err, t, 'conversations.couldNotLoadDetail'))
     } finally {
       setLoading(false)
     }
@@ -43,12 +44,18 @@ export default function ConversationDetail() {
           to="/conversations"
           className="type-micro font-medium text-muted transition-colors hover:text-ink"
         >
+          {/* The arrow is an element of its own rather than a character
+                inside the sentence, so a right-to-left layout can mirror it
+                without mirroring the words beside it. */}
+          <span aria-hidden="true" className="inline-block rtl:-scale-x-100">
+            ←
+          </span>{' '}
           {t('conversations.allConversations')}
         </Link>
-        <h1 className="type-title mt-1.5">
+        <h1 dir="auto" className="type-title mt-1.5">
           {conversation.title || t('conversations.untitled')}
         </h1>
-        <p className="type-micro mt-1 text-faint">{formatDate(conversation.createdAt)}</p>
+        <p className="type-micro mt-1 text-faint">{formatDate(conversation.createdAt, dateLocale(lang))}</p>
 
         {/* The conversation id travels in the query string so the chat page can
             reopen THIS thread rather than starting a new one on the same

@@ -102,7 +102,7 @@ export default function DocumentChat() {
       })
       .catch((err) => {
         if (!cancelled) {
-          setSendError(getErrorMessage(err, t('chat.couldNotLoadConversation')))
+          setSendError(getErrorMessage(err, t, 'chat.couldNotLoadConversation'))
         }
       })
       .finally(() => {
@@ -120,7 +120,7 @@ export default function DocumentChat() {
     try {
       setDoc(await getDocument(documentId))
     } catch (err) {
-      setLoadError(getErrorMessage(err, t('chat.couldNotLoadDocument')))
+      setLoadError(getErrorMessage(err, t, 'chat.couldNotLoadDocument'))
     } finally {
       setLoading(false)
     }
@@ -176,7 +176,7 @@ export default function DocumentChat() {
         },
       ])
     } catch (err) {
-      setSendError(getErrorMessage(err, t('chat.couldNotAnswer')))
+      setSendError(getErrorMessage(err, t, 'chat.couldNotAnswer'))
       setDraft(message)
       setMessages((current) => current.slice(0, -1))
     } finally {
@@ -208,10 +208,20 @@ export default function DocumentChat() {
             to="/documents"
             className="type-micro font-medium text-muted transition-colors hover:text-ink"
           >
+            {/* The arrow is an element of its own rather than a character
+                inside the sentence, so a right-to-left layout can mirror it
+                without mirroring the words beside it. */}
+            <span aria-hidden="true" className="inline-block rtl:-scale-x-100">
+              ←
+            </span>{' '}
             {t('chat.allDocuments')}
           </Link>
-          <h1 className="type-title mt-1.5 truncate">{doc.title}</h1>
-          <p className="type-micro truncate text-faint">{doc.filename}</p>
+          <h1 dir="auto" className="type-title mt-1.5 truncate">
+            {doc.title}
+          </h1>
+          <p dir="auto" className="type-micro truncate text-faint">
+            {doc.filename}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {/* The pending side is the server's own word for the state, shown
@@ -286,9 +296,12 @@ export default function DocumentChat() {
         <label htmlFor="chat-input" className="sr-only">
           {t('chat.inputLabel')}
         </label>
+        {/* The question is the student's own writing, in whichever
+            language they are reading the document in. */}
         <Input
           id="chat-input"
           ref={inputRef}
+          dir="auto"
           className="min-w-0 flex-1"
           value={draft}
           disabled={!ready || sending || resuming}
@@ -337,8 +350,10 @@ export function MessageBubble({ message }) {
   if (isUser) {
     return (
       <li className="animate-enter flex justify-end">
-        <div className="measure rounded-lg rounded-br-xs bg-accent px-4 py-2.5 text-on-accent">
-          <p className="type-body whitespace-pre-line">{message.content}</p>
+        <div className="measure rounded-lg rounded-ee-xs bg-accent px-4 py-2.5 text-on-accent">
+          <p dir="auto" className="type-body whitespace-pre-line">
+            {message.content}
+          </p>
         </div>
       </li>
     )
@@ -353,7 +368,9 @@ export function MessageBubble({ message }) {
         <SparkIcon className="h-4 w-4" />
       </span>
       <Card className="measure min-w-0 flex-1 px-4 py-3.5">
-        <p className="type-body whitespace-pre-line text-ink">
+        {/* The answer is written in the language of the document, which is
+            not necessarily the language of the interface around it. */}
+        <p dir="auto" className="type-body whitespace-pre-line text-ink">
           {message.content || <em className="text-muted">{t('chat.emptyAnswer')}</em>}
         </p>
 

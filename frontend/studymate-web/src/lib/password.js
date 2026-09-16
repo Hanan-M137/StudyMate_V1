@@ -8,16 +8,25 @@
    still in front of them, instead of after a round trip.
 
    Kept in one module so the Register page and the change-password form in
-   Settings cannot drift apart, and so the sentence shown as a hint is built
-   from the same numbers as the sentence shown as an error.
+   Settings cannot drift apart.
+
+   WHAT CHANGED FOR ARABIC: this module used to build the sentence itself,
+   joining fragments with ", " and " and ". That cannot be translated - the
+   fragments would come out as Arabic words strung together with English
+   grammar. So it no longer produces a sentence at all. It decides which
+   rules were broken and returns the key of the one whole sentence that says
+   so; the component translates it. There are seven keys because three rules
+   have seven non-empty combinations, and a whole sentence per combination is
+   the only shape that can be written correctly in both languages.
    ========================================================================== */
 
 /* The same 8 the backend uses. If it ever moves, both sides move. */
 export const MIN_PASSWORD_LENGTH = 8
 
 /* Shown before the student types anything, which is the point: the rules
-   are cheapest to follow when they are known in advance. */
-export const PASSWORD_HINT = `At least ${MIN_PASSWORD_LENGTH} characters, including a letter and a digit.`
+   are cheapest to follow when they are known in advance. Interpolated with
+   { min: MIN_PASSWORD_LENGTH } at the call site. */
+export const PASSWORD_HINT_KEY = 'password.hint'
 
 /* Unicode-aware, matching the backend's str.isalpha() / str.isdigit(). The
    \p{L} and \p{N} classes cover Arabic, which /[a-zA-Z]/ and /[0-9]/ would
@@ -26,39 +35,46 @@ export const PASSWORD_HINT = `At least ${MIN_PASSWORD_LENGTH} characters, includ
 const HAS_LETTER = /\p{L}/u
 const HAS_NUMBER = /\p{N}/u
 
+/* ==========================================================================
+   One key per combination of broken rules
+   ========================================================================== */
+
+/* The combination is written in the order the rules are checked - length,
+   letter, digit - which is also the order validate_password names them in,
+   so lib/serverErrors.js can rebuild the server's sentence from the same
+   table and land on the same key. */
+export const PASSWORD_ERROR_KEYS = {
+  length: 'password.errLength',
+  letter: 'password.errLetter',
+  digit: 'password.errDigit',
+  'length+letter': 'password.errLengthLetter',
+  'length+digit': 'password.errLengthDigit',
+  'letter+digit': 'password.errLetterDigit',
+  'length+letter+digit': 'password.errLengthLetterDigit',
+}
+
 /**
- * Returns an error sentence for a password that breaks the rules, or null
- * when it is acceptable.
+ * The key of the sentence describing everything wrong with this password, or
+ * null when there is nothing wrong with it.
  *
- * Every broken rule is named in one sentence rather than one at a time, so
- * a student fixing a short digitless password does not have to submit twice
- * to learn about both problems. The wording matches what the API would have
- * answered, so the message does not change shape depending on which side
- * caught it.
+ * Every broken rule is named in one sentence rather than one at a time, so a
+ * student fixing a short digitless password does not have to submit twice to
+ * learn about both problems.
+ *
+ * Interpolate the result with { min: MIN_PASSWORD_LENGTH }.
  */
-export function getPasswordError(password) {
+export function getPasswordErrorKey(password) {
   const value = password ?? ''
 
-  const problems = []
+  const broken = []
 
-  if (value.length < MIN_PASSWORD_LENGTH) {
-    problems.push(`be at least ${MIN_PASSWORD_LENGTH} characters long`)
-  }
+  if (value.length < MIN_PASSWORD_LENGTH) broken.push('length')
 
-  if (!HAS_LETTER.test(value)) {
-    problems.push('contain at least one letter')
-  }
+  if (!HAS_LETTER.test(value)) broken.push('letter')
 
-  if (!HAS_NUMBER.test(value)) {
-    problems.push('contain at least one digit')
-  }
+  if (!HAS_NUMBER.test(value)) broken.push('digit')
 
-  if (problems.length === 0) return null
+  if (broken.length === 0) return null
 
-  const requirements =
-    problems.length === 1
-      ? problems[0]
-      : `${problems.slice(0, -1).join(', ')} and ${problems[problems.length - 1]}`
-
-  return `Password must ${requirements}.`
+  return PASSWORD_ERROR_KEYS[broken.join('+')]
 }

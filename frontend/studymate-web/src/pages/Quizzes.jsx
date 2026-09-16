@@ -9,6 +9,7 @@ import {
   setQuizPinned,
 } from '../api/quizzes'
 import { useI18n } from '../context/I18nContext'
+import { dateLocale, isolate } from '../lib/language'
 import { getErrorMessage } from '../lib/errors'
 import { sortPinnedFirst } from '../lib/pinned'
 import PageHeader from '../components/PageHeader'
@@ -82,7 +83,7 @@ export default function Quizzes() {
       setDocuments(docs)
       setQuizzes(savedQuizzes)
     } catch (err) {
-      setLoadError(getErrorMessage(err, t('quiz.couldNotLoad')))
+      setLoadError(getErrorMessage(err, t, 'quiz.couldNotLoad'))
     } finally {
       setLoading(false)
     }
@@ -238,7 +239,7 @@ export default function Quizzes() {
       setTitle('')
       await load()
     } catch (err) {
-      setCreateError(getErrorMessage(err, t('quiz.couldNotCreate')))
+      setCreateError(getErrorMessage(err, t, 'quiz.couldNotCreate'))
     } finally {
       setCreating(false)
     }
@@ -327,6 +328,7 @@ export default function Quizzes() {
                   {(field) => (
                     <Input
                       {...field}
+                      dir="auto"
                       value={title}
                       placeholder={t('quiz.titlePlaceholder')}
                       onChange={(event) => setTitle(event.target.value)}
@@ -457,8 +459,11 @@ export default function Quizzes() {
                       browser without the speech API, which is why there is
                       no fallback to arrange here. */}
                   <div className="flex flex-wrap items-start gap-3">
+                    {/* What to focus on is the student's own description of
+                        their material, written in its language. */}
                     <textarea
                       id="quiz-description"
+                      dir="auto"
                       rows={3}
                       value={description}
                       placeholder={t('quiz.focusPlaceholder')}
@@ -502,13 +507,19 @@ export default function Quizzes() {
                   {/* The document's own title is the student's, so it is
                       dropped into the sentence rather than translated with it. */}
                   <h2 className="type-eyebrow">
-                    {t('quiz.fromDocument', { title: selectedDocument.title })}
+                    {t('quiz.fromDocument', { title: isolate(selectedDocument.title) })}
                   </h2>
                   <button
                     type="button"
                     onClick={clearDocument}
                     className="type-small rounded-sm px-2 py-1 text-muted transition-colors hover:bg-sunken hover:text-ink"
                   >
+                    {/* The arrow is an element of its own rather than a character
+                inside the sentence, so a right-to-left layout can mirror it
+                without mirroring the words beside it. */}
+                    <span aria-hidden="true" className="inline-block rtl:-scale-x-100">
+                      ←
+                    </span>{' '}
                     {t('quiz.allDocumentsBack')}
                   </button>
                 </div>
@@ -568,18 +579,23 @@ function QuizWarnings({ quiz }) {
           the student's content and the generator's own words, neither ours to
           translate. Only the sentence around the title is. */}
       <p className="text-sm font-medium text-ink">
-        {t('quiz.createdWithWarnings', { title: quiz.title })}
+        {t('quiz.createdWithWarnings', { title: isolate(quiz.title) })}
       </p>
-      <ul className="type-small mt-2 list-disc space-y-1 pl-5 text-muted">
+      <ul className="type-small mt-2 list-disc space-y-1 ps-5 text-muted">
         {quiz.warnings.map((warning, index) => (
-          <li key={index}>{warning}</li>
+          <li dir="auto" key={index}>
+            {warning}
+          </li>
         ))}
       </ul>
       <Link
         to={`/quizzes/${quiz.id}`}
         className="type-small mt-3 inline-flex font-medium text-accent hover:underline"
       >
-        {t('quiz.openQuiz')}
+        {t('quiz.openQuiz')}{' '}
+        <span aria-hidden="true" className="inline-block rtl:-scale-x-100">
+          →
+        </span>
       </Link>
     </div>
   )
@@ -599,7 +615,7 @@ function DocumentCard({ document, quizCount, onOpen }) {
       <button
         type="button"
         onClick={onOpen}
-        className="flex w-full items-center gap-3 px-4 py-4 text-left"
+        className="flex w-full items-center gap-3 px-4 py-4 text-start"
       >
         <span
           aria-hidden="true"
@@ -608,7 +624,9 @@ function DocumentCard({ document, quizCount, onOpen }) {
           <DocumentIcon className="h-4 w-4" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-ink">{document.title}</span>
+          <span dir="auto" className="block truncate text-sm font-medium text-ink">
+            {document.title}
+          </span>
           <span className="type-micro block text-faint">
             {quizCount === 0
               ? t('quiz.noneYet')
@@ -617,7 +635,7 @@ function DocumentCard({ document, quizCount, onOpen }) {
                 : t('quiz.countOther', { count: quizCount })}
           </span>
         </span>
-        <ChevronIcon className="h-4 w-4 shrink-0 text-faint" />
+        <ChevronIcon className="h-4 w-4 shrink-0 text-faint rtl:-scale-x-100" />
       </button>
     </Card>
   )
@@ -651,7 +669,7 @@ function QuizList({ quizzes, showDocument, onRenamed, onPinned, onDeleted }) {
  * short field, and the row is where the name is being read from.
  */
 function QuizRow({ quiz, showDocument, onRenamed, onPinned, onDeleted }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
 
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(quiz.title)
@@ -689,7 +707,7 @@ function QuizRow({ quiz, showDocument, onRenamed, onPinned, onDeleted }) {
       onRenamed(quiz.id, updated.title)
       setRenaming(false)
     } catch (err) {
-      setError(getErrorMessage(err, t('quiz.couldNotRename')))
+      setError(getErrorMessage(err, t, 'quiz.couldNotRename'))
     } finally {
       setSaving(false)
     }
@@ -702,6 +720,7 @@ function QuizRow({ quiz, showDocument, onRenamed, onPinned, onDeleted }) {
           <div className="flex flex-wrap items-center gap-2">
             <Input
               autoFocus
+              dir="auto"
               value={draft}
               aria-label={t('quiz.renameLabel')}
               onChange={(event) => setDraft(event.target.value)}
@@ -738,12 +757,14 @@ function QuizRow({ quiz, showDocument, onRenamed, onPinned, onDeleted }) {
             <QuizIcon className="h-4 w-4" />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium text-ink">{quiz.title}</span>
+            <span dir="auto" className="block truncate text-sm font-medium text-ink">
+              {quiz.title}
+            </span>
             <span className="type-micro block truncate text-faint">
-              {describeQuiz(quiz, showDocument)}
+              {describeQuiz(t, dateLocale(lang), quiz, showDocument)}
             </span>
           </span>
-          <ChevronIcon className="h-4 w-4 shrink-0 text-faint" />
+          <ChevronIcon className="h-4 w-4 shrink-0 text-faint rtl:-scale-x-100" />
         </Link>
 
         {/* Beside Rename and Delete, and before them: it is the one control
@@ -757,7 +778,7 @@ function QuizRow({ quiz, showDocument, onRenamed, onPinned, onDeleted }) {
           }}
         />
 
-        <div className="shrink-0 text-right">
+        <div className="shrink-0 text-end">
           <button
             type="button"
             onClick={startRenaming}
@@ -796,7 +817,7 @@ function DeleteQuizButton({ quiz, onDeleted }) {
       await deleteQuiz(quiz.id)
       onDeleted(quiz.id)
     } catch (err) {
-      setError(getErrorMessage(err, t('quiz.couldNotDelete')))
+      setError(getErrorMessage(err, t, 'quiz.couldNotDelete'))
       setDeleting(false)
       setConfirming(false)
     }
@@ -804,7 +825,7 @@ function DeleteQuizButton({ quiz, onDeleted }) {
 
   if (!confirming) {
     return (
-      <div className="shrink-0 text-right">
+      <div className="shrink-0 text-end">
         <button
           type="button"
           onClick={() => setConfirming(true)}
@@ -851,29 +872,46 @@ function DeleteQuizButton({ quiz, onDeleted }) {
  *
  * The document name is left out when the list is already one document's
  * quizzes - it would be the same words under every row.
+ *
+ * `t` and `locale` are passed in because this is not a component. It used to
+ * build "3 questions" out of a number and a bare English plural, which is a
+ * sentence that cannot be translated: Arabic has six plural forms, and this
+ * project has no plural machinery and deliberately wants none. The English
+ * keys keep the two forms English needs; the Arabic side sidesteps the
+ * problem in wording, with "عدد الأسئلة: 3" rather than a counted plural.
  */
-function describeQuiz(quiz, showDocument = true) {
+function describeQuiz(t, locale, quiz, showDocument = true) {
   const parts = []
 
-  if (showDocument && quiz.documentTitle) parts.push(quiz.documentTitle)
+  /* The document's own title, isolated because it is content sitting in a
+     line of ours and may run the other way. */
+  if (showDocument && quiz.documentTitle) parts.push(isolate(quiz.documentTitle))
 
   if (quiz.questionsCount != null) {
-    parts.push(`${quiz.questionsCount} ${quiz.questionsCount === 1 ? 'question' : 'questions'}`)
+    parts.push(
+      quiz.questionsCount === 1
+        ? t('quiz.rowQuestionsOne', { count: quiz.questionsCount })
+        : t('quiz.rowQuestionsOther', { count: quiz.questionsCount }),
+    )
   }
 
   if (quiz.attemptsCount) {
-    parts.push(`${quiz.attemptsCount} ${quiz.attemptsCount === 1 ? 'attempt' : 'attempts'}`)
+    parts.push(
+      quiz.attemptsCount === 1
+        ? t('quiz.rowAttemptsOne', { count: quiz.attemptsCount })
+        : t('quiz.rowAttemptsOther', { count: quiz.attemptsCount }),
+    )
   }
 
-  const date = formatDate(quiz.createdAt)
+  const date = formatDate(quiz.createdAt, locale)
   if (date) parts.push(date)
 
   return parts.join(' · ')
 }
 
-function formatDate(value) {
+function formatDate(value, locale) {
   if (!value) return null
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return null
-  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+  return date.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' })
 }

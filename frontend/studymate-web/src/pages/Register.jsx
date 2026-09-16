@@ -3,7 +3,11 @@ import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useI18n } from '../context/I18nContext'
 import { getErrorMessage } from '../lib/errors'
-import { PASSWORD_HINT, getPasswordError } from '../lib/password'
+import {
+  MIN_PASSWORD_LENGTH,
+  PASSWORD_HINT_KEY,
+  getPasswordErrorKey,
+} from '../lib/password'
 import { Button, Field, Input, InlineError } from '../components/ui'
 import AuthLayout from './AuthLayout'
 
@@ -27,9 +31,9 @@ export default function Register() {
     /* The same three rules the API applies, checked here first so the
        ordinary mistake never costs a round trip. The server still checks:
        this is a convenience, not the rule. */
-    const passwordError = getPasswordError(password)
-    if (passwordError) {
-      setError(passwordError)
+    const passwordErrorKey = getPasswordErrorKey(password)
+    if (passwordErrorKey) {
+      setError(t(passwordErrorKey, { min: MIN_PASSWORD_LENGTH }))
       return
     }
 
@@ -40,7 +44,7 @@ export default function Register() {
       await login({ email, password })
       navigate('/documents', { replace: true })
     } catch (err) {
-      setError(getErrorMessage(err, t('auth.couldNotCreateAccount')))
+      setError(getErrorMessage(err, t, 'auth.couldNotCreateAccount'))
     } finally {
       setSubmitting(false)
     }
@@ -88,10 +92,11 @@ export default function Register() {
           )}
         </Field>
 
-        {/* The hint is PASSWORD_HINT from lib/password.js, which is built from
-            MIN_PASSWORD_LENGTH outside any component and so cannot reach t()
-            here. Left as it was, and listed in the batch report. */}
-        <Field label={t('auth.password')} required hint={PASSWORD_HINT}>
+        <Field
+          label={t('auth.password')}
+          required
+          hint={t(PASSWORD_HINT_KEY, { min: MIN_PASSWORD_LENGTH })}
+        >
           {(field) => (
             <Input
               {...field}

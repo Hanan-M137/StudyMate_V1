@@ -6,8 +6,10 @@ import {
   getQuizAttempt,
   listQuizAttempts,
   submitQuizAttempt,
+  translateQuestionType,
 } from '../api/quizzes'
 import { useI18n } from '../context/I18nContext'
+import { dateLocale, isolate } from '../lib/language'
 import { getErrorMessage } from '../lib/errors'
 import { CheckIcon, CloseIcon } from '../components/icons'
 import {
@@ -100,7 +102,7 @@ export default function QuizTake() {
 }
 
 function QuizTakePage({ quizId }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
 
   const [quiz, setQuiz] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -129,7 +131,7 @@ function QuizTakePage({ quizId }) {
       // falls back to empty rather than becoming a page error.
       setAttempts(await listQuizAttempts(quizId).catch(() => []))
     } catch (err) {
-      setError(getErrorMessage(err, t('quiz.couldNotLoadOne')))
+      setError(getErrorMessage(err, t, 'quiz.couldNotLoadOne'))
     } finally {
       setLoading(false)
     }
@@ -205,7 +207,7 @@ function QuizTakePage({ quizId }) {
           : 'smooth',
       })
     } catch (err) {
-      setSubmitError(getErrorMessage(err, t('quiz.couldNotSubmit')))
+      setSubmitError(getErrorMessage(err, t, 'quiz.couldNotSubmit'))
     } finally {
       setSubmitting(false)
     }
@@ -227,9 +229,17 @@ function QuizTakePage({ quizId }) {
             to="/quizzes"
             className="type-micro font-medium text-muted transition-colors hover:text-ink"
           >
+            {/* The arrow is an element of its own rather than a character
+                inside the sentence, so a right-to-left layout can mirror it
+                without mirroring the words beside it. */}
+            <span aria-hidden="true" className="inline-block rtl:-scale-x-100">
+              ←
+            </span>{' '}
             {t('quiz.allQuizzes')}
           </Link>
-          <h1 className="type-display mt-1.5">{quiz.title}</h1>
+          <h1 dir="auto" className="type-display mt-1.5">
+            {quiz.title}
+          </h1>
           <p className="type-small mt-1 flex flex-wrap items-center gap-x-1.5 text-muted">
             <span>
               {questions.length === 1
@@ -265,8 +275,10 @@ function QuizTakePage({ quizId }) {
           no URL, no app name, no "printed from". The date is the day it was
           printed, which is the only date a worksheet needs. */}
       <header className="print-only print-header">
-        <h1 className="type-display">{quiz.title}</h1>
-        <p className="type-small mt-1 text-muted">{formatPrintDate()}</p>
+        <h1 dir="auto" className="type-display">
+          {quiz.title}
+        </h1>
+        <p className="type-small mt-1 text-muted">{formatPrintDate(dateLocale(lang))}</p>
       </header>
 
       {result ? <ScoreCard result={result} questionCount={questions.length} /> : null}
@@ -394,8 +406,11 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
       </legend>
 
       <div className="mb-3.5 flex items-start justify-between gap-4">
-        <p className="measure type-body font-medium text-ink">
-          <span className="mr-2 text-faint tabular-nums">{index + 1}.</span>
+        {/* dir="auto" on the whole line, number included: an Arabic
+            question numbered on the left would read as two fragments rather
+            than one line. */}
+        <p dir="auto" className="measure type-body font-medium text-ink">
+          <span className="me-2 text-faint tabular-nums">{index + 1}.</span>
           {/* The question itself is the generator's text, shown as it was
               written. Only the note standing in for a missing one is ours. */}
           {question.text || <em className="text-muted">{t('quiz.noQuestionText')}</em>}
@@ -409,7 +424,7 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
                 : 'neutral'
           }
         >
-          {question.typeLabel}
+          {translateQuestionType(t, question)}
         </Badge>
       </div>
 
@@ -423,6 +438,7 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
               one line. */}
           <textarea
             id={`answer-${question.id}`}
+            dir="auto"
             value={value}
             disabled={locked}
             rows={3}
@@ -496,11 +512,14 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
                 </span>
                 <span className="type-small text-ink">
                   {question.type === 'multiple_choice' ? (
-                    <span className="mr-2 font-semibold text-muted">{option.key}</span>
+                    <span className="me-2 font-semibold text-muted">{option.key}</span>
                   ) : null}
-                  {option.text}
+                  {/* Only the option's own words, not the "A" in front of
+                      them: keyed on the letter, every option would be read as
+                      left-to-right whatever language it is written in. */}
+                  <span dir="auto">{option.text}</span>
                   {isCorrectOption ? (
-                    <span className="type-micro ml-2 font-semibold text-accent">
+                    <span className="type-micro ms-2 font-semibold text-accent">
                       {t('quiz.correctAnswerMarker')}
                     </span>
                   ) : null}
@@ -560,10 +579,17 @@ function Feedback({ feedback, isFreeText }) {
       )}
       <div className="type-small">
         <p className="font-semibold">{label}</p>
-        {feedback.reason ? <p className="mt-0.5 opacity-90">{feedback.reason}</p> : null}
+        {/* The reason is the sentence Claude wrote about this answer and
+            the answer is the student's own: content, both of them. */}
+        {feedback.reason ? (
+          <p dir="auto" className="mt-0.5 opacity-90">
+            {feedback.reason}
+          </p>
+        ) : null}
         {feedback.student_answer != null ? (
           <p className="mt-0.5 opacity-75">
-            {t('quiz.youAnswered', { answer: String(feedback.student_answer) })}
+            {t('quiz.youAnswered')}
+            <span dir="auto">{String(feedback.student_answer)}</span>
           </p>
         ) : null}
 
@@ -573,12 +599,16 @@ function Feedback({ feedback, isFreeText }) {
         {isFreeText && feedback.correct_answer ? (
           <p className="mt-1.5">
             <span className="font-semibold">{t('quiz.modelAnswer')}</span>
-            <span className="opacity-90">{String(feedback.correct_answer)}</span>
+            <span dir="auto" className="opacity-90">
+              {String(feedback.correct_answer)}
+            </span>
           </p>
         ) : null}
 
         {feedback.explanation ? (
-          <p className="mt-1.5 opacity-90">{String(feedback.explanation)}</p>
+          <p dir="auto" className="mt-1.5 opacity-90">
+            {String(feedback.explanation)}
+          </p>
         ) : null}
       </div>
     </div>
@@ -593,6 +623,21 @@ function findFeedback(result, questionId) {
 }
 
 /**
+ * A stored attempt's score as one piece of text: "1 / 5", or "1" when the
+ * attempt was saved before the total was recorded.
+ *
+ * Built here rather than in the markup so that the whole thing can be
+ * isolated as a unit - see the call site.
+ */
+function formatScore(score, totalQuestions) {
+  const scored = score ?? '--'
+
+  if (totalQuestions == null) return String(scored)
+
+  return `${scored} / ${totalQuestions}`
+}
+
+/**
  * Past attempts at this quiz, newest first, each one openable.
  *
  * The score was stored; the per-question verdicts were not. Choice
@@ -603,7 +648,7 @@ function findFeedback(result, questionId) {
  * student already saw.
  */
 function AttemptsTable({ quizId, attempts }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
 
   const [openId, setOpenId] = useState(null)
   const [detail, setDetail] = useState(null)
@@ -625,7 +670,7 @@ function AttemptsTable({ quizId, attempts }) {
     try {
       setDetail(await getQuizAttempt(quizId, attemptId))
     } catch (err) {
-      setDetailError(getErrorMessage(err, t('attempts.couldNotLoad')))
+      setDetailError(getErrorMessage(err, t, 'attempts.couldNotLoad'))
     } finally {
       setLoadingDetail(false)
     }
@@ -644,7 +689,7 @@ function AttemptsTable({ quizId, attempts }) {
       <div className="overflow-x-auto rounded-xl border border-line bg-surface">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-line text-left">
+            <tr className="border-b border-line text-start">
               <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
                 {t('attempts.colAttempt')}
               </th>
@@ -671,9 +716,13 @@ function AttemptsTable({ quizId, attempts }) {
                 <td className="px-4 py-2.5 tabular-nums text-muted">
                   {attempts.length - index}
                 </td>
+                {/* One isolated string rather than two nodes either side
+                    of a slash: the spaces around the slash break "1 / 5"
+                    into two separate number runs, which lay out
+                    right-to-left in the Arabic interface and swap, so a
+                    student reads five out of one. */}
                 <td className="px-4 py-2.5 tabular-nums text-ink">
-                  {attempt.score ?? '--'}
-                  {attempt.totalQuestions != null ? ` / ${attempt.totalQuestions}` : ''}
+                  {isolate(formatScore(attempt.score, attempt.totalQuestions))}
                 </td>
                 <td className="px-4 py-2.5 tabular-nums text-ink">
                   {attempt.percentage != null ? `${Math.round(attempt.percentage)}%` : '--'}
@@ -685,9 +734,9 @@ function AttemptsTable({ quizId, attempts }) {
                   {formatDuration(attempt.durationSeconds) || '—'}
                 </td>
                 <td className="px-4 py-2.5 text-muted">
-                  {formatDateTime(attempt.completedAt) || '--'}
+                  {formatDateTime(attempt.completedAt, dateLocale(lang)) || '--'}
                 </td>
-                <td className="px-4 py-2.5 text-right">
+                <td className="px-4 py-2.5 text-end">
                   <button
                     type="button"
                     onClick={() => toggleAttempt(attempt.id)}
@@ -745,22 +794,27 @@ function AttemptDetail({ detail }) {
                   : 'border-line',
             )}
           >
-            <p className="measure type-small font-medium text-ink">
-              <span className="mr-2 text-faint tabular-nums">{index + 1}.</span>
+            <p dir="auto" className="measure type-small font-medium text-ink">
+              <span className="me-2 text-faint tabular-nums">{index + 1}.</span>
               {question.text}
             </p>
 
+            {/* The labels are ours and the values are the student's, so each
+                value is isolated inside the line rather than the line taking
+                its direction from whichever came first. */}
             <div className="type-small mt-2 space-y-1">
               <p className={cx(yours ? 'text-ink' : 'text-faint')}>
                 <span className="font-semibold text-muted">{t('attempts.youWrote')}</span>
-                {yours || t('attempts.nothing')}
+                {yours ? <AnswerValue answer={yours} /> : t('attempts.nothing')}
               </p>
               <p className="text-ink">
                 <span className="font-semibold text-muted">{t('attempts.correctLabel')}</span>
-                {right || '--'}
+                {right ? <AnswerValue answer={right} /> : '--'}
               </p>
               {question.explanation ? (
-                <p className="text-muted">{question.explanation}</p>
+                <p dir="auto" className="text-muted">
+                  {question.explanation}
+                </p>
               ) : null}
             </div>
 
@@ -775,10 +829,38 @@ function AttemptDetail({ detail }) {
 }
 
 /**
- * Turn a stored answer into something readable: "B — the frame buffer"
- * rather than "B". Option keys are matched without case, because a choice
+ * One stored answer on a review line: the option letter beside the option's
+ * own words, as two elements.
+ *
+ * Two, not one string. The letter is the first strong character of
+ * "A — الإجابة", so a dir="auto" holding both reads the whole value as
+ * left-to-right and parks the letter at the far left of an otherwise Arabic
+ * line. Outside the isolate it no longer decides anything: the line keeps
+ * the interface's direction and the words work their own out. The quiz page
+ * and the printed sheet keep the letter out of the option text for exactly
+ * this reason.
+ */
+function AnswerValue({ answer }) {
+  if (answer.key == null) return <span dir="auto">{answer.text}</span>
+
+  return (
+    <>
+      <span>{answer.key}</span>
+      {' — '}
+      <span dir="auto">{answer.text}</span>
+    </>
+  )
+}
+
+/**
+ * Turn a stored answer into its two readable pieces: the option letter and
+ * the option's own words - { key: 'B', text: 'the frame buffer' } rather
+ * than a bare "B". Option keys are matched without case, because a choice
  * answer is stored upper-cased while true/false options are keyed in lower
  * case.
+ *
+ * `key` is null whenever there is no letter to show: a true/false answer is
+ * its own words, and a written answer has no options to look one up in.
  */
 function describeAnswer(question, value) {
   if (value == null || String(value).trim() === '') return null
@@ -793,11 +875,11 @@ function describeAnswer(question, value) {
 
     if (key) {
       const text = String(options[key] ?? '')
-      return question.type === 'true_false' ? text : `${key} — ${text}`
+      return { key: question.type === 'true_false' ? null : key, text }
     }
   }
 
-  return raw
+  return { key: null, text: raw }
 }
 
 /**
@@ -805,19 +887,19 @@ function describeAnswer(question, value) {
  * state: the page is not open long enough for the day to turn, and a stale
  * date on a worksheet is worse than no date.
  */
-function formatPrintDate() {
-  return new Date().toLocaleDateString(undefined, {
+function formatPrintDate(locale) {
+  return new Date().toLocaleDateString(locale, {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
   })
 }
 
-function formatDateTime(value) {
+function formatDateTime(value, locale) {
   if (!value) return null
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return null
-  return date.toLocaleString(undefined, {
+  return date.toLocaleString(locale, {
     day: 'numeric',
     month: 'short',
     hour: '2-digit',

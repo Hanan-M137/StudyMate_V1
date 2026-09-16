@@ -42,16 +42,20 @@ export default function SourceList({ sources }) {
                 aria-expanded={open}
                 onClick={() => setOpenIndex(open ? null : index)}
                 className={cx(
-                  'flex w-full items-center gap-2 rounded-xs border px-2.5 py-1.5 text-left transition-colors duration-150',
+                  'flex w-full items-center gap-2 rounded-xs border px-2.5 py-1.5 text-start transition-colors duration-150',
                   open
                     ? 'border-accent-line bg-accent-soft'
                     : 'border-line bg-sunken/60 hover:border-line-strong',
                 )}
               >
+                {/* Closed it points along the text and has to turn round in
+                    a right-to-left layout; open it points down, which is the
+                    same direction in both. Mirroring and rotating at once
+                    would compose into neither. */}
                 <ChevronIcon
                   className={cx(
                     'h-3.5 w-3.5 shrink-0 text-muted transition-transform duration-150',
-                    open && 'rotate-90',
+                    open ? 'rotate-90' : 'rtl:-scale-x-100',
                   )}
                 />
                 <span className="type-micro font-semibold text-ink-soft">
@@ -63,11 +67,22 @@ export default function SourceList({ sources }) {
 
               {open ? (
                 <div className="animate-enter mt-1.5 rounded-xs border border-line bg-surface px-3 py-2.5">
+                  {/* The snippet is a passage out of the student's own PDF, so
+                      it decides its own direction rather than inheriting the
+                      interface's. */}
                   {parsed.text != null ? (
-                    <p className="type-small whitespace-pre-line text-ink-soft">{parsed.text}</p>
+                    <p
+                      dir="auto"
+                      className="type-small whitespace-pre-line text-ink-soft"
+                    >
+                      {parsed.text}
+                    </p>
                   ) : (
-                    <pre className="type-micro overflow-x-auto whitespace-pre-wrap break-words text-muted">
-                      {parsed.fallback}
+                    <pre
+                      dir="auto"
+                      className="type-micro overflow-x-auto whitespace-pre-wrap break-words text-muted"
+                    >
+                      {parsed.fallbackKey ? t(parsed.fallbackKey) : parsed.fallback}
                     </pre>
                   )}
                 </div>
@@ -81,7 +96,9 @@ export default function SourceList({ sources }) {
 }
 
 function parseSource(source) {
-  if (source == null) return { text: null, page: null, fallback: '(empty source)' }
+  /* A key, not a sentence: this runs outside the component, and the caller
+     translates whatever it hands back. */
+  if (source == null) return { text: null, page: null, fallbackKey: 'sources.empty' }
 
   if (typeof source === 'string' || typeof source === 'number') {
     return { text: String(source), page: null, key: null }

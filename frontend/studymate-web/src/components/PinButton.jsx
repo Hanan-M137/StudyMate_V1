@@ -47,7 +47,7 @@ export default function PinButton({ pinned, noun, onToggle }) {
     try {
       await onToggle(next)
     } catch (err) {
-      setError(getErrorMessage(err, t(`pin.${next ? 'pinFailed' : 'unpinFailed'}.${noun}`)))
+      setError(getErrorMessage(err, t, `pin.${next ? 'pinFailed' : 'unpinFailed'}.${noun}`))
     } finally {
       /* Either the parent has the server's answer in its own state now, or the
          request failed and the control belongs back at the old state. Both are
@@ -58,7 +58,7 @@ export default function PinButton({ pinned, noun, onToggle }) {
   }
 
   return (
-    <div className="shrink-0 text-right">
+    <div className="shrink-0 text-end">
       <button
         type="button"
         onClick={handleClick}

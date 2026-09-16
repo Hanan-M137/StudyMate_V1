@@ -9,6 +9,10 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: "Fraunces", ui-serif, Georgia, "Times New Roman", serif;
+  /* Named here rather than only inside the Arabic block below, because it is
+     wanted in two places: for the whole page when the interface is Arabic,
+     and for a single Arabic word sitting inside an English page. */
+  --font-arabic: "IBM Plex Sans Arabic", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
 
   /* Neutral base - warm, not blue-grey */
   --color-paper: #faf8f4;
@@ -52,6 +56,15 @@
   --shadow-pop: 0 18px 45px -20px rgb(28 26 23 / 0.35);
 }
 
+/* The body's own two numbers, as properties rather than literals, so the
+   Arabic block below can raise them the way the dark block raises a colour.
+   They are deliberately outside @theme: Tailwind would read a --text-* name
+   as a request for a text-* utility, and these are not utilities. */
+:root {
+  --body-size: 0.9375rem;
+  --body-leading: 1.6;
+}
+
 /* ==========================================================================
    Dark palette.
 
@@ -91,6 +104,82 @@
   --color-on-danger: #2b0f0c;
 }
 
+/* ==========================================================================
+   Arabic type.
+
+   Same idea as the dark palette above: the same token names, different
+   values, and nothing outside this block knows which language is running.
+   [lang] is set on <html> by the inline script in index.html before first
+   paint, and afterwards by src/lib/language.js.
+
+   ONE FAMILY, NOT TWO. In English the hierarchy is carried by a serif
+   display face against a sans body - Fraunces against Inter. Arabic has no
+   equivalent of Fraunces, and the naskh and kufi faces that get reached for
+   instead pair badly with a Latin sans and read as decoration rather than as
+   a heading. So headings and body are both IBM Plex Sans Arabic, and the
+   hierarchy comes from weight and size, which the type-* utilities already
+   set.
+
+   THE TWO NUMBERS BELOW ARE A STARTING POINT, NOT A MEASUREMENT. At the same
+   nominal size Arabic reads smaller and denser than Latin, and its ascenders
+   and descenders need more room than Inter's leading leaves them. 1rem and
+   1.8 are the conventional first guess for that; they have not been judged
+   against real Arabic text on a real screen, and they should be before this
+   is considered finished.
+
+   Note what is NOT here: .type-body, .type-small and .type-micro still carry
+   their own literal sizes, so they do not follow. Whether they should is the
+   same judgement call, and it wants the same pair of eyes.
+   ========================================================================== */
+:root[lang="ar"] {
+  --font-sans: var(--font-arabic);
+  --font-display: var(--font-arabic);
+
+  --body-size: 1rem;
+  --body-leading: 1.8;
+}
+
+/* Letter-spacing is not something that can be done to Arabic. The script is
+   cursive: the letters within a word are joined, and prising them apart with
+   tracking pulls the joins open and turns one word into a row of fragments.
+   Every tracked rule in this file is therefore reset here - the tight
+   negative tracking on the display faces as much as the wide positive
+   tracking on the eyebrow, since both do the same damage.
+
+   And Arabic has no upper and lower case, so uppercasing an eyebrow does
+   nothing at all: the same characters come back, and the rule only exists to
+   make English eyebrows small-and-shouty.
+
+   These sit outside @layer so they beat the utilities, which is how the
+   cascade treats an unlayered rule against a layered one. */
+:root[lang="ar"] h1,
+:root[lang="ar"] h2,
+:root[lang="ar"] h3,
+:root[lang="ar"] .type-display,
+:root[lang="ar"] .type-title,
+:root[lang="ar"] .type-eyebrow {
+  letter-spacing: normal;
+}
+
+:root[lang="ar"] .type-eyebrow {
+  text-transform: none;
+}
+
+/* An Arabic word inside an English page.
+
+   The language switch on the settings page names each language in its own
+   language, so "العربية" has to render while the interface is still English
+   and :root[lang="ar"] does not apply. Without this it falls back to whatever
+   Arabic face the operating system happens to have, which is the exact
+   problem the block above exists to solve - just in one row rather than the
+   whole page.
+
+   It matches <html lang="ar"> as well, harmlessly: the body is already being
+   given the same family through --font-sans. */
+[lang="ar"] {
+  font-family: var(--font-arabic);
+}
+
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
@@ -100,8 +189,8 @@
     background-color: var(--color-paper);
     color: var(--color-ink);
     font-family: var(--font-sans);
-    font-size: 0.9375rem;
-    line-height: 1.6;
+    font-size: var(--body-size);
+    line-height: var(--body-leading);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }

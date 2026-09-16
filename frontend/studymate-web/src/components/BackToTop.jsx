@@ -73,7 +73,7 @@ export default function BackToTop() {
       type="button"
       onClick={scrollToTop}
       aria-label={t('common.backToTop')}
-      className="no-print animate-enter fixed bottom-5 left-5 z-30 flex h-10 w-10 items-center justify-center rounded-full border border-line-strong bg-surface text-ink-soft shadow-raised transition-colors duration-150 hover:bg-sunken hover:text-ink"
+      className="no-print animate-enter fixed bottom-5 start-5 z-30 flex h-10 w-10 items-center justify-center rounded-full border border-line-strong bg-surface text-ink-soft shadow-raised transition-colors duration-150 hover:bg-sunken hover:text-ink"
     >
       <ArrowUpIcon className="h-[18px] w-[18px]" />
     </button>

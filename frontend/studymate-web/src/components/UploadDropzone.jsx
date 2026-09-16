@@ -78,9 +78,9 @@ export default function UploadDropzone({ onFile, uploading, progress = 0, disabl
       </p>
 
       {uploading ? (
-        <div className="mx-auto mt-5 max-w-sm text-left">
+        <div className="mx-auto mt-5 max-w-sm text-start">
           <div className="type-micro mb-1.5 flex items-center justify-between text-muted">
-            <span className="truncate pr-3">{fileName || t('upload.uploading')}</span>
+            <span className="truncate pe-3">{fileName || t('upload.uploading')}</span>
             <span className="tabular-nums">{progress}%</span>
           </div>
           <div

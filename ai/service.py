@@ -19,7 +19,7 @@ load_dotenv()
 
 #from pypdf import PdfReader
 import io
-import fitz  # PyMuPDF
+import pymupdf
 import pytesseract
 from PIL import Image
 from spellchecker import SpellChecker
@@ -740,7 +740,7 @@ def extract_pdf_chunks(
             f"PDF file was not found: {file_path}"
         )
 
-    pdf_document = fitz.open(str(path))
+    pdf_document = pymupdf.open(str(path))
 
     extracted_chunks = []
 
@@ -893,7 +893,7 @@ def process_document(
         # Update document information
         # -----------------------------------------------------
 
-        pdf_document = fitz.open(
+        pdf_document = pymupdf.open(
             document.file_path
         )
 

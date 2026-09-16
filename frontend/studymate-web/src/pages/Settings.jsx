@@ -4,7 +4,12 @@ import { useI18n } from '../context/I18nContext'
 import { changePassword, updateProfile } from '../api/auth'
 import { setTokens } from '../api/tokens'
 import { getErrorMessage } from '../lib/errors'
-import { PASSWORD_HINT, getPasswordError } from '../lib/password'
+import {
+  MIN_PASSWORD_LENGTH,
+  PASSWORD_HINT_KEY,
+  getPasswordErrorKey,
+} from '../lib/password'
+import { LANGUAGES, isolate } from '../lib/language'
 import { THEMES, getStoredTheme, setTheme, watchSystemTheme } from '../lib/theme'
 import {
   Button,
@@ -39,6 +44,16 @@ const THEME_HINT_KEYS = {
   dark: 'settings.themeDarkHint',
 }
 
+/* Each language names itself, and neither name is ever translated. A student
+   looking for Arabic is looking for the word "العربية" - not for whatever the
+   English interface has decided to call it, which they would have to already
+   read English to recognise. This is the one row of text in the app that is
+   deliberately the same in both dictionaries by not being in either. */
+const LANGUAGE_LABELS = {
+  en: 'English',
+  ar: 'العربية',
+}
+
 export default function Settings() {
   const { t } = useI18n()
 
@@ -60,7 +75,7 @@ export default function Settings() {
    ========================================================================== */
 
 function AppearanceSection() {
-  const { t } = useI18n()
+  const { t, lang, setLang } = useI18n()
 
   /* Read once, from storage rather than from the document: the inline script
      in index.html has already resolved 'system' into a light or dark
@@ -84,7 +99,45 @@ function AppearanceSection() {
         <h2 className="type-title">{t('settings.appearance')}</h2>
       </CardHeader>
 
-      <CardBody>
+      <CardBody className="space-y-7">
+        {/* Language sits above the theme because it is the larger of the two
+            choices: the theme repaints the page, the language rewrites it and
+            turns the layout round. Same control as the theme below - a radio
+            group that takes effect on the spot, with nothing to save. */}
+        <fieldset>
+          <legend className="mb-2.5 block text-sm font-medium text-ink-soft">
+            {t('settings.language')}
+          </legend>
+
+          <div className="space-y-2">
+            {LANGUAGES.map((value) => (
+              <label
+                key={value}
+                className="flex cursor-pointer items-start gap-3 rounded-sm border border-line px-3.5 py-3 transition-colors duration-150 hover:bg-sunken has-[:checked]:border-accent-line has-[:checked]:bg-accent-soft"
+              >
+                <input
+                  type="radio"
+                  name="language"
+                  value={value}
+                  checked={lang === value}
+                  onChange={() => setLang(value)}
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--color-accent)]"
+                />
+                {/* `lang` on the label itself, not just on <html>: this is the
+                    one place a language name appears inside the other
+                    language, and saying which language the word is in is what
+                    gets it the right typeface and the right screen-reader
+                    voice while the interface is still English. */}
+                <span className="min-w-0">
+                  <span lang={value} className="block text-sm font-medium text-ink">
+                    {LANGUAGE_LABELS[value]}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
         {/* A radio group, not a dropdown: three options, all worth seeing at
             once, and the choice takes effect on the spot - there is nothing
             to save, so there is no save button. */}
@@ -184,7 +237,7 @@ function NameForm() {
       setDraft(null)
       setSaved(true)
     } catch (err) {
-      setError(getErrorMessage(err, t('settings.couldNotSaveName')))
+      setError(getErrorMessage(err, t, 'settings.couldNotSaveName'))
     } finally {
       setSaving(false)
     }
@@ -194,7 +247,7 @@ function NameForm() {
     <form onSubmit={handleSubmit} className="space-y-3" noValidate>
       <Field
         label={t('settings.name')}
-        hint={email ? t('settings.signedInAs', { email }) : undefined}
+        hint={email ? t('settings.signedInAs', { email: isolate(email) }) : undefined}
       >
         {(field) => (
           <Input
@@ -243,9 +296,9 @@ function PasswordForm() {
        field also disagrees, and it is the mistake the student can fix
        without retyping both. Mirrors validate_password on the server,
        which checks again regardless. */
-    const passwordError = getPasswordError(newPassword)
-    if (passwordError) {
-      setError(passwordError)
+    const passwordErrorKey = getPasswordErrorKey(newPassword)
+    if (passwordErrorKey) {
+      setError(t(passwordErrorKey, { min: MIN_PASSWORD_LENGTH }))
       return
     }
 
@@ -273,7 +326,7 @@ function PasswordForm() {
       setConfirmPassword('')
       setSaved(true)
     } catch (err) {
-      setError(getErrorMessage(err, t('settings.couldNotChangePassword')))
+      setError(getErrorMessage(err, t, 'settings.couldNotChangePassword'))
     } finally {
       setSaving(false)
     }
@@ -298,10 +351,11 @@ function PasswordForm() {
         )}
       </Field>
 
-      {/* PASSWORD_HINT comes from lib/password.js, where it is built from
-          MIN_PASSWORD_LENGTH outside any component and cannot reach t(). Left
-          as it was, and listed in the batch report. */}
-      <Field label={t('settings.newPassword')} required hint={PASSWORD_HINT}>
+      <Field
+        label={t('settings.newPassword')}
+        required
+        hint={t(PASSWORD_HINT_KEY, { min: MIN_PASSWORD_LENGTH })}
+      >
         {(field) => (
           <Input
             {...field}

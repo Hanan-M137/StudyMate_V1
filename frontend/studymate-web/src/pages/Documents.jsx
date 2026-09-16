@@ -11,6 +11,7 @@ import {
   uploadDocument,
 } from '../api/documents'
 import { useI18n } from '../context/I18nContext'
+import { isolate } from '../lib/language'
 import { getErrorMessage } from '../lib/errors'
 import PageHeader from '../components/PageHeader'
 import UploadDropzone from '../components/UploadDropzone'
@@ -50,7 +51,7 @@ export default function Documents() {
     try {
       setDocuments(await listDocuments())
     } catch (err) {
-      setError(getErrorMessage(err, t('documents.couldNotLoad')))
+      setError(getErrorMessage(err, t, 'documents.couldNotLoad'))
     } finally {
       setLoading(false)
     }
@@ -101,7 +102,7 @@ export default function Documents() {
       })
       setDocuments((current) => [created, ...current.filter((doc) => doc.id !== created.id)])
     } catch (err) {
-      setUploadError(getErrorMessage(err, t('documents.uploadFailedMessage')))
+      setUploadError(getErrorMessage(err, t, 'documents.uploadFailedMessage'))
     } finally {
       setUploading(false)
       setProgress(0)
@@ -114,7 +115,7 @@ export default function Documents() {
       const updated = await renameDocument(documentId, title)
       setDocuments((current) => current.map((doc) => (doc.id === documentId ? updated : doc)))
     } catch (err) {
-      setRowError(getErrorMessage(err, t('documents.couldNotRename')))
+      setRowError(getErrorMessage(err, t, 'documents.couldNotRename'))
       throw err
     }
   }
@@ -128,7 +129,7 @@ export default function Documents() {
       setDocuments((current) => current.filter((doc) => doc.id !== pendingDelete.id))
       setPendingDelete(null)
     } catch (err) {
-      setRowError(getErrorMessage(err, t('documents.couldNotDelete')))
+      setRowError(getErrorMessage(err, t, 'documents.couldNotDelete'))
       setPendingDelete(null)
     } finally {
       setDeleting(false)
@@ -196,7 +197,9 @@ export default function Documents() {
       <ConfirmDialog
         open={Boolean(pendingDelete)}
         title={t('documents.deleteTitle')}
-        description={t('documents.deleteDescription', { title: pendingDelete?.title ?? '' })}
+        description={t('documents.deleteDescription', {
+          title: isolate(pendingDelete?.title ?? ''),
+        })}
         confirmLabel={t('documents.deleteConfirm')}
         busy={deleting}
         onConfirm={handleDelete}
@@ -251,6 +254,7 @@ function DocumentRow({ doc, onRename, onRequestDelete }) {
               id={`rename-${doc.id}`}
               value={title}
               autoFocus
+              dir="auto"
               className="min-w-40 flex-1"
               onChange={(event) => setTitle(event.target.value)}
               onKeyDown={(event) => {
@@ -287,9 +291,16 @@ function DocumentRow({ doc, onRename, onRequestDelete }) {
               <DocumentIcon className="h-[18px] w-[18px]" />
             </span>
 
+            {/* The title the student gave it and the name of their own
+                file: both are content, and both decide their own
+                direction. */}
             <div className="min-w-0 flex-1 basis-48">
-              <p className="truncate text-sm font-medium text-ink">{doc.title}</p>
-              <p className="type-micro truncate text-faint">{doc.filename}</p>
+              <p dir="auto" className="truncate text-sm font-medium text-ink">
+                {doc.title}
+              </p>
+              <p dir="auto" className="type-micro truncate text-faint">
+                {doc.filename}
+              </p>
             </div>
 
             <StatusBadge status={doc.status} />

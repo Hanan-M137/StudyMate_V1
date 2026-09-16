@@ -46,6 +46,82 @@ export default {
   },
 
   /* ========================================================================
+     errors - what getErrorMessage says when the server said nothing useful
+
+     lib/errors.js holds no sentences at all any more. It decides which of
+     these applies and hands the key back; the component translates it.
+     ======================================================================== */
+
+  errors: {
+    /* The period is the difference from common.somethingWentWrong, and so is
+       the role: that one is the heading over an error block, this one is the
+       message inside it. */
+    generic: 'Something went wrong.',
+
+    sessionExpired: 'Your session has expired. Please sign in again.',
+    forbidden: 'You do not have access to this resource.',
+    notFound: 'Not found.',
+    requestFailed: 'Request failed (HTTP {status}).',
+    unreachable: 'Could not reach the API. Is the backend running?',
+  },
+
+  /* ========================================================================
+     password - the rules, as whole sentences
+
+     One key per combination of broken rules rather than fragments joined
+     with commas and "and". English can build the sentence from pieces;
+     Arabic coordinates a list differently and would need the whole sentence
+     rewritten, not the pieces translated. Seven keys is the price of being
+     able to write both correctly.
+
+     The English wording matches validate_password in backend/main.py word
+     for word, so the message does not change shape depending on which side
+     caught it - and so lib/serverErrors.js can map the server's copy back
+     onto these same keys.
+     ======================================================================== */
+
+  password: {
+    hint: 'At least {min} characters, including a letter and a digit.',
+
+    errLength: 'Password must be at least {min} characters long.',
+    errLetter: 'Password must contain at least one letter.',
+    errDigit: 'Password must contain at least one digit.',
+    errLengthLetter:
+      'Password must be at least {min} characters long and contain at least one letter.',
+    errLengthDigit:
+      'Password must be at least {min} characters long and contain at least one digit.',
+    errLetterDigit:
+      'Password must contain at least one letter and contain at least one digit.',
+    errLengthLetterDigit:
+      'Password must be at least {min} characters long, contain at least one letter and contain at least one digit.',
+  },
+
+  /* ========================================================================
+     server - the backend's own messages, recognised and translated
+
+     The English here is copied from backend/main.py exactly, because that is
+     what the match is made against. See lib/serverErrors.js for the mapping
+     and for what happens to a message that is not on this list.
+     ======================================================================== */
+
+  server: {
+    invalidCredentials: 'Invalid email or password',
+    emailRegistered: 'Email already registered',
+    onlyPdf: 'Only PDF files are supported',
+    currentPasswordIncorrect: 'Current password is incorrect',
+
+    numQuestionsMin: 'num_questions must be at least 1',
+    numQuestionsMax: 'num_questions cannot exceed 50',
+    notEnoughQuestions:
+      '{count} question(s) is not enough for {types} question type(s): each type you pick needs at least one question.',
+
+    pageRangeBoth: 'Give both a first and a last page, or neither.',
+    firstPageMin: 'The first page must be 1 or greater.',
+    lastPageBeforeFirst: 'The last page cannot come before the first page.',
+    noSuchPage: 'This document has {pages} pages, so it has no page {page}.',
+  },
+
+  /* ========================================================================
      nav - the sidebar and the mobile drawer
      ======================================================================== */
 
@@ -185,6 +261,18 @@ export default {
     stopListening: 'Stop listening',
     languageGroup: 'Speech recognition language',
     couldNotStart: 'The microphone could not be started. Try again in a moment.',
+
+    /* One per error code in the SpeechRecognition spec. The component picks
+       the key; the codes themselves stay in VoiceInput.jsx. */
+    errBlocked:
+      'The microphone was blocked. Allow it for this site in your browser, then try again.',
+    errNoService:
+      'This browser would not start its speech service. You can type the answer instead.',
+    errNoMicrophone: 'No microphone was found. Connect one, or type instead.',
+    errNoSpeech: 'Nothing was heard. Try again, a little closer to the microphone.',
+    errNetwork:
+      'Speech recognition needs a connection, and this request did not get through.',
+    errUnexpected: 'The microphone stopped unexpectedly. You can type instead.',
   },
 
   /* ========================================================================
@@ -196,6 +284,9 @@ export default {
     countOther: '{count} citations',
     page: 'Page {page}',
     source: 'Source {number}',
+
+    /* Stood in for by parseSource when a citation arrives as null. */
+    empty: '(empty source)',
   },
 
   /* ========================================================================
@@ -206,7 +297,11 @@ export default {
     loadingDocument: 'Loading document',
     couldNotLoadDocument: 'Could not load this document.',
     documentNotFound: 'Document not found',
-    allDocuments: '← All documents',
+
+    /* The arrow that used to live in front of this is now a span of its own
+       in the markup, so it can be mirrored in a right-to-left layout without
+       mirroring the words with it. */
+    allDocuments: 'All documents',
 
     newThread: 'New thread',
 
@@ -267,7 +362,7 @@ export default {
     /* The button in the empty state, and the small link above a filtered
        list. One offers a way out of a dead end, the other clears a filter. */
     allDocumentsButton: 'All documents',
-    allDocumentsBack: '← All documents',
+    allDocumentsBack: 'All documents',
 
     emptyTitle: 'No conversations yet',
     emptyDescription:
@@ -292,7 +387,7 @@ export default {
 
     notFound: 'Conversation not found',
     untitled: 'Conversation',
-    allConversations: '← All conversations',
+    allConversations: 'All conversations',
     continue: 'Continue this conversation',
     noMessagesTitle: 'No messages in this conversation',
     noMessagesDescription: 'The API returned no messages for this thread.',
@@ -333,6 +428,25 @@ export default {
     typeMultipleChoice: 'Multiple choice',
     typeTrueFalse: 'True / false',
     typeShortAnswer: 'Short answer',
+
+    /* The badge on a question while a quiz is being taken, keyed by the
+       backend's own slug. Deliberately NOT the same keys as the three form
+       labels above: those name a type you are asking for, these name the
+       type a question turned out to be, and a language that wants to shorten
+       a badge will not want the form's checkbox shortened with it.
+
+       Same words as the form labels, though. These used to read "True False"
+       and "Multiple Choice", which was not a decision - it was whatever
+       questionTypeLabel() happened to produce by replacing the underscore
+       and title-casing the result. A badge and a checkbox naming the same
+       thing two different ways on the same page is a defect, so they now
+       agree; the keys stay separate so they can stop agreeing on purpose. */
+    type: {
+      multiple_choice: 'Multiple choice',
+      true_false: 'True / false',
+      short_answer: 'Short answer',
+      unknown: 'Question',
+    },
     typesHint:
       'Pick at least one. All three is the same as leaving it alone. The questions are split evenly between the types you pick.',
 
@@ -382,7 +496,7 @@ export default {
     couldNotCreate: 'Could not create the quiz.',
 
     createdWithWarnings: '“{title}” was created, with something to mention:',
-    openQuiz: 'Open the quiz →',
+    openQuiz: 'Open the quiz',
 
     /* ---- The list ---- */
 
@@ -390,7 +504,7 @@ export default {
     unknownDocumentDescription:
       'It may have been deleted, or it may still be processing. The list of documents below has the ones that can be quizzed.',
     allDocumentsButton: 'All documents',
-    allDocumentsBack: '← All documents',
+    allDocumentsBack: 'All documents',
 
     yourDocuments: 'Your documents',
     fromDocument: 'Quizzes from {title}',
@@ -399,6 +513,13 @@ export default {
     noneYet: 'No quizzes yet',
     countOne: '{count} quiz',
     countOther: '{count} quizzes',
+
+    /* The second line of a quiz row. Separate from countOne/countOther above,
+       which count quizzes rather than what is inside one. */
+    rowQuestionsOne: '{count} question',
+    rowQuestionsOther: '{count} questions',
+    rowAttemptsOne: '{count} attempt',
+    rowAttemptsOther: '{count} attempts',
 
     renameLabel: 'Quiz title',
     needsTitle: 'A quiz needs a title.',
@@ -414,7 +535,7 @@ export default {
     loadingOne: 'Loading quiz',
     couldNotLoadOne: 'Could not load this quiz.',
     notFound: 'Quiz not found',
-    allQuizzes: '← All quizzes',
+    allQuizzes: 'All quizzes',
 
     headerCountOne: '{count} question · mixed question types',
     headerCountOther: '{count} questions · mixed question types',
@@ -465,7 +586,11 @@ export default {
        judges an answer. */
     correctAnswerMarker: 'Correct answer',
 
-    youAnswered: 'You answered: {answer}',
+    /* A label rather than a sentence with the answer inside it: the answer
+       is the student's own text and is rendered in its own dir="auto" span,
+       so that an English answer inside an Arabic page keeps its punctuation
+       where it belongs. Same shape as attempts.youWrote. */
+    youAnswered: 'You answered: ',
     modelAnswer: 'Model answer: ',
 
     resultEyebrow: 'Result',
@@ -527,6 +652,12 @@ export default {
     subtitle: 'Appearance and account.',
 
     appearance: 'Appearance',
+
+    /* The two option labels are not here. A language names itself in its own
+       language, so "English" and "العربية" are written into the markup and
+       read the same whichever language is running. */
+    language: 'Language',
+
     theme: 'Theme',
     themeSystem: 'System',
     themeLight: 'Light',

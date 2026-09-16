@@ -50,18 +50,19 @@ const DEFAULT_LANGUAGE = 'ar-SA'
 
 /* The spec's error codes, one short sentence each. "not-allowed" tells a
    student nothing, and the raw code in the interface only makes the page
-   look broken. */
-const ERROR_MESSAGES = {
-  'not-allowed':
-    'The microphone was blocked. Allow it for this site in your browser, then try again.',
-  'service-not-allowed':
-    'This browser would not start its speech service. You can type the answer instead.',
-  'audio-capture': 'No microphone was found. Connect one, or type instead.',
-  'no-speech': 'Nothing was heard. Try again, a little closer to the microphone.',
-  network: 'Speech recognition needs a connection, and this request did not get through.',
+   look broken.
+
+   Keys rather than the sentences: this table is read out here, outside the
+   component, so the component resolves whichever key it picks. */
+const ERROR_KEYS = {
+  'not-allowed': 'voice.errBlocked',
+  'service-not-allowed': 'voice.errNoService',
+  'audio-capture': 'voice.errNoMicrophone',
+  'no-speech': 'voice.errNoSpeech',
+  network: 'voice.errNetwork',
 }
 
-const FALLBACK_ERROR = 'The microphone stopped unexpectedly. You can type instead.'
+const FALLBACK_ERROR_KEY = 'voice.errUnexpected'
 
 /**
  * A microphone and a language toggle for one text field.
@@ -173,7 +174,7 @@ export default function VoiceInput({ value, onChange, className }) {
          itself - our own doing, and not something to report. */
       if (event.error === 'aborted') return
 
-      setError(ERROR_MESSAGES[event.error] || FALLBACK_ERROR)
+      setError(t(ERROR_KEYS[event.error] || FALLBACK_ERROR_KEY))
     }
 
     recognition.onend = () => {

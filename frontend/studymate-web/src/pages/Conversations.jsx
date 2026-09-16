@@ -8,6 +8,7 @@ import {
 } from '../api/conversations'
 import { listDocuments } from '../api/documents'
 import { useI18n } from '../context/I18nContext'
+import { dateLocale, isolate } from '../lib/language'
 import { getErrorMessage } from '../lib/errors'
 import { sortPinnedFirst } from '../lib/pinned'
 import PageHeader from '../components/PageHeader'
@@ -62,7 +63,7 @@ export default function Conversations() {
       setConversations(rows)
       setDocumentTitles(Object.fromEntries(docs.map((doc) => [doc.id, doc.title])))
     } catch (err) {
-      setError(getErrorMessage(err, t('conversations.couldNotLoad')))
+      setError(getErrorMessage(err, t, 'conversations.couldNotLoad'))
     } finally {
       setLoading(false)
     }
@@ -197,13 +198,19 @@ export default function Conversations() {
             {/* The document's own title is the student's, so it is dropped
                 into the sentence rather than translated with it. */}
             <h2 className="type-eyebrow">
-              {t('conversations.aboutDocument', { title: selectedGroup.title })}
+              {t('conversations.aboutDocument', { title: isolate(selectedGroup.title) })}
             </h2>
             <button
               type="button"
               onClick={clearDocument}
               className="type-small rounded-sm px-2 py-1 text-muted transition-colors hover:bg-sunken hover:text-ink"
             >
+              {/* The arrow is an element of its own rather than a character
+                inside the sentence, so a right-to-left layout can mirror it
+                without mirroring the words beside it. */}
+              <span aria-hidden="true" className="inline-block rtl:-scale-x-100">
+                ←
+              </span>{' '}
               {t('conversations.allDocumentsBack')}
             </button>
           </div>
@@ -254,7 +261,7 @@ function DocumentCard({ title, conversationCount, onOpen }) {
       <button
         type="button"
         onClick={onOpen}
-        className="flex w-full items-center gap-3 px-4 py-4 text-left"
+        className="flex w-full items-center gap-3 px-4 py-4 text-start"
       >
         <span
           aria-hidden="true"
@@ -263,14 +270,16 @@ function DocumentCard({ title, conversationCount, onOpen }) {
           <DocumentIcon className="h-4 w-4" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-ink">{title}</span>
+          <span dir="auto" className="block truncate text-sm font-medium text-ink">
+            {title}
+          </span>
           <span className="type-micro block text-faint">
             {conversationCount === 1
               ? t('conversations.countOne', { count: conversationCount })
               : t('conversations.countOther', { count: conversationCount })}
           </span>
         </span>
-        <ChevronIcon className="h-4 w-4 shrink-0 text-faint" />
+        <ChevronIcon className="h-4 w-4 shrink-0 text-faint rtl:-scale-x-100" />
       </button>
     </Card>
   )
@@ -321,7 +330,7 @@ function ConversationRow({
   onPinned,
   onDeleted,
 }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
 
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(conversation.title ?? '')
@@ -359,7 +368,7 @@ function ConversationRow({
       onRenamed(conversation.id, updated.title ?? next)
       setRenaming(false)
     } catch (err) {
-      setError(getErrorMessage(err, t('conversations.couldNotRename')))
+      setError(getErrorMessage(err, t, 'conversations.couldNotRename'))
     } finally {
       setSaving(false)
     }
@@ -372,6 +381,7 @@ function ConversationRow({
           <div className="flex flex-wrap items-center gap-2">
             <Input
               autoFocus
+              dir="auto"
               value={draft}
               aria-label={t('conversations.renameLabel')}
               onChange={(event) => setDraft(event.target.value)}
@@ -411,19 +421,21 @@ function ConversationRow({
             <ChatIcon className="h-[18px] w-[18px]" />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium text-ink">
+            {/* A conversation is titled with the first question that was
+                asked, so the title is the student's words. */}
+            <span dir="auto" className="block truncate text-sm font-medium text-ink">
               {conversation.title || fallbackTitle}
             </span>
             <span className="type-micro block truncate text-faint">
               {[
                 showDocument ? documentTitle : null,
-                formatDate(conversation.createdAt),
+                formatDate(conversation.createdAt, dateLocale(lang)),
               ]
                 .filter(Boolean)
                 .join('  ·  ')}
             </span>
           </span>
-          <ChevronIcon className="h-4 w-4 shrink-0 text-faint" />
+          <ChevronIcon className="h-4 w-4 shrink-0 text-faint rtl:-scale-x-100" />
         </Link>
 
         {/* Only for a conversation that has a real id - a row without one
@@ -440,7 +452,7 @@ function ConversationRow({
               }}
             />
 
-            <div className="shrink-0 text-right">
+            <div className="shrink-0 text-end">
               <button
                 type="button"
                 onClick={startRenaming}
@@ -483,7 +495,7 @@ function DeleteConversationButton({ conversation, onDeleted }) {
       await deleteConversation(conversation.id)
       onDeleted(conversation.id)
     } catch (err) {
-      setError(getErrorMessage(err, t('conversations.couldNotDelete')))
+      setError(getErrorMessage(err, t, 'conversations.couldNotDelete'))
       setDeleting(false)
       setConfirming(false)
     }
@@ -491,7 +503,7 @@ function DeleteConversationButton({ conversation, onDeleted }) {
 
   if (!confirming) {
     return (
-      <div className="shrink-0 text-right">
+      <div className="shrink-0 text-end">
         <button
           type="button"
           onClick={() => setConfirming(true)}
@@ -527,12 +539,16 @@ function DeleteConversationButton({ conversation, onDeleted }) {
   )
 }
 
-/* Also used by ConversationDetail.jsx for the header date. */
-export function formatDate(value) {
+/* Also used by ConversationDetail.jsx for the header date.
+
+   `locale` comes from dateLocale() in lib/language.js: 'ar-u-nu-latn' for
+   Arabic, which is Arabic month names with Latin digits, and undefined for
+   English, which leaves the choice to the browser. */
+export function formatDate(value, locale) {
   if (!value) return null
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return null
-  return date.toLocaleString(undefined, {
+  return date.toLocaleString(locale, {
     day: 'numeric',
     month: 'short',
     hour: '2-digit',

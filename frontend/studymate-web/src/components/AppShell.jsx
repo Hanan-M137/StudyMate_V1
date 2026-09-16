@@ -51,7 +51,7 @@ export default function AppShell() {
     <div className="app-shell min-h-full lg:grid lg:grid-cols-[16rem_1fr]">
       <a
         href="#main"
-        className="no-print sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-sm focus:bg-surface focus:px-4 focus:py-2 focus:shadow-pop"
+        className="no-print sr-only focus:not-sr-only focus:absolute focus:start-4 focus:top-4 focus:z-50 focus:rounded-sm focus:bg-surface focus:px-4 focus:py-2 focus:shadow-pop"
       >
         {t('nav.skipToContent')}
       </a>
@@ -81,7 +81,7 @@ export default function AppShell() {
           <nav
             id="mobile-nav"
             aria-label={t('nav.mainNavigation')}
-            className="animate-enter absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col border-r border-line bg-surface"
+            className="animate-enter absolute inset-y-0 start-0 flex w-72 max-w-[85vw] flex-col border-e border-line bg-surface"
           >
             <div className="flex items-center justify-between border-b border-line px-4 py-3.5">
               <Wordmark />
@@ -106,7 +106,7 @@ export default function AppShell() {
       ) : null}
 
       {/* Desktop sidebar */}
-      <aside className="no-print sticky top-0 hidden h-screen flex-col border-r border-line bg-surface lg:flex">
+      <aside className="no-print sticky top-0 hidden h-screen flex-col border-e border-line bg-surface lg:flex">
         <div className="px-5 py-5">
           <Wordmark />
         </div>
@@ -231,7 +231,11 @@ function UserPanel({ displayName, email, onSettings, onLogout }) {
         {t('nav.settings')}
       </Button>
       <Button variant="ghost" size="sm" className="mt-1 w-full justify-start" onClick={onLogout}>
-        <LogoutIcon className="h-4 w-4" />
+        {/* The only icon in the sidebar that points anywhere: it shows
+            something leaving, and in a right-to-left layout things leave to
+            the left. The document, chat, quiz and gear icons beside it mean
+            no direction at all and are left alone. */}
+        <LogoutIcon className="h-4 w-4 rtl:-scale-x-100" />
         {t('auth.signOut')}
       </Button>
     </div>

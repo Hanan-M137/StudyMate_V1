@@ -67,11 +67,11 @@ export function Input({ className, ...props }) {
 export function Select({ className, children, ...props }) {
   return (
     <div className="relative">
-      <select className={cx(CONTROL, 'appearance-none pr-9', className)} {...props}>
+      <select className={cx(CONTROL, 'appearance-none pe-9', className)} {...props}>
         {children}
       </select>
       <svg
-        className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
+        className="pointer-events-none absolute end-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
         viewBox="0 0 20 20"
         fill="none"
         aria-hidden="true"

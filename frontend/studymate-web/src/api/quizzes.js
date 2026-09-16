@@ -67,12 +67,35 @@ export const QUESTION_TYPES = {
   SHORT_ANSWER: 'short_answer',
 }
 
-/** Human label for any question_type the backend invents, including new ones. */
+/**
+ * A last-resort English label for a question_type nobody has written a
+ * translation for - "quiz_bonus" becomes "Quiz Bonus".
+ *
+ * This used to be the label. It is now only the fallback: the badge is keyed
+ * by the slug instead, because a title-cased English slug is not a
+ * translation and cannot become one. See translateQuestionType below.
+ */
 export function questionTypeLabel(type) {
   if (!type) return 'Question'
   return String(type)
     .replace(/[_-]+/g, ' ')
     .replace(/\b\w/g, (character) => character.toUpperCase())
+}
+
+/**
+ * The badge shown on one question, in the running language.
+ *
+ * `t` is passed in because this is not a component and cannot call a hook.
+ * A slug the dictionary has never heard of falls back to the title-cased
+ * English rather than showing the raw key: the backend is documented as free
+ * to invent new question types, and a student meeting one should see
+ * something readable rather than `quiz.type.whatever`.
+ */
+export function translateQuestionType(t, question) {
+  const key = `quiz.type.${question.typeSlug}`
+  const translated = t(key)
+
+  return translated === key ? question.typeLabel : translated
 }
 
 export function normaliseQuestion(raw, index = 0) {
@@ -107,6 +130,9 @@ export function normaliseQuestion(raw, index = 0) {
     hasRealId: id != null,
     text: raw.question_text ?? raw.question ?? '',
     type,
+    /* The slug is what the badge is keyed by; typeLabel is only read when
+       the dictionary has no key for that slug. */
+    typeSlug: type,
     typeLabel: questionTypeLabel(raw.question_type),
     isFreeText,
     isKnownType: Object.values(QUESTION_TYPES).includes(type),

@@ -27,7 +27,7 @@ export default function Login() {
       await login({ email, password })
       navigate(location.state?.from || '/documents', { replace: true })
     } catch (err) {
-      setError(getErrorMessage(err, t('auth.couldNotSignIn')))
+      setError(getErrorMessage(err, t, 'auth.couldNotSignIn'))
     } finally {
       setSubmitting(false)
     }

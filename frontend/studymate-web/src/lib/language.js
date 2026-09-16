@@ -95,3 +95,52 @@ export function applyLanguage(value) {
 
   return language
 }
+
+/* ==========================================================================
+   Putting content inside interface text
+   ========================================================================== */
+
+/* U+2068 FIRST STRONG ISOLATE and U+2069 POP DIRECTIONAL ISOLATE.
+
+   The text-level equivalent of dir="auto", for the places where a piece of
+   the student's content is dropped into a sentence of ours and there is no
+   element to hang an attribute on - a document title inside "Quizzes from
+   {title}", say.
+
+   Without them the browser runs its bidi algorithm over the whole sentence
+   at once, and an English title inside an Arabic sentence drags the
+   surrounding punctuation to the wrong end: the full stop lands at the far
+   left, quotation marks swap sides. The isolate tells the browser to work
+   the title out on its own and then put the result back as one unit.
+
+   Both characters are invisible and have no width. They are safe in an
+   English interface too, which is why the call sites do not check the
+   language first. */
+const FIRST_STRONG_ISOLATE = '⁨'
+const POP_DIRECTIONAL_ISOLATE = '⁩'
+
+export function isolate(value) {
+  if (value == null || value === '') return ''
+
+  return `${FIRST_STRONG_ISOLATE}${value}${POP_DIRECTIONAL_ISOLATE}`
+}
+
+/* ==========================================================================
+   Dates
+   ========================================================================== */
+
+/**
+ * The locale to format dates and times in.
+ *
+ * `ar-u-nu-latn`, not plain `ar`: Arabic month names, Latin digits. Plain
+ * `ar` would bring Arabic-Indic digits (١٢٣) with it, and every other number
+ * in this app - scores, page numbers, the timer - is written in Latin
+ * digits. One page with both would look like a mistake, because it would be.
+ *
+ * `undefined` for English hands the choice back to the browser, which is
+ * what these formatters did before there was a second language: a student in
+ * Britain gets a British date, one in the United States an American one.
+ */
+export function dateLocale(language) {
+  return language === 'ar' ? 'ar-u-nu-latn' : undefined
+}
