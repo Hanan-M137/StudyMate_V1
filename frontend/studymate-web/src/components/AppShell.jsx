@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useI18n } from '../context/I18nContext'
 import BackToTop from './BackToTop'
 import { Button, cx } from './ui'
 import {
@@ -13,14 +14,18 @@ import {
   SettingsIcon,
 } from './icons'
 
+/* Keys, not words. The list has to be built before any component runs and a
+   hook cannot run out here, so each entry carries the key and NavLinks below
+   resolves it while it renders. */
 const NAV = [
-  { to: '/documents', label: 'Documents', icon: DocumentIcon },
-  { to: '/conversations', label: 'Conversations', icon: ChatIcon },
-  { to: '/quizzes', label: 'Quizzes', icon: QuizIcon },
+  { to: '/documents', labelKey: 'nav.documents', icon: DocumentIcon },
+  { to: '/conversations', labelKey: 'nav.conversations', icon: ChatIcon },
+  { to: '/quizzes', labelKey: 'nav.quizzes', icon: QuizIcon },
 ]
 
 export default function AppShell() {
   const { displayName, email, logout } = useAuth()
+  const { t } = useI18n()
   const navigate = useNavigate()
   const location = useLocation()
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -48,7 +53,7 @@ export default function AppShell() {
         href="#main"
         className="no-print sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-sm focus:bg-surface focus:px-4 focus:py-2 focus:shadow-pop"
       >
-        Skip to content
+        {t('nav.skipToContent')}
       </a>
 
       {/* Mobile bar */}
@@ -61,7 +66,7 @@ export default function AppShell() {
           className="rounded-xs p-1.5 text-ink-soft transition-colors hover:bg-sunken"
         >
           {mobileNavOpen ? <CloseIcon className="h-5 w-5" /> : <MenuIcon className="h-5 w-5" />}
-          <span className="sr-only">{mobileNavOpen ? 'Close menu' : 'Open menu'}</span>
+          <span className="sr-only">{mobileNavOpen ? t('nav.closeMenu') : t('nav.openMenu')}</span>
         </button>
         <Wordmark />
       </header>
@@ -75,7 +80,7 @@ export default function AppShell() {
           />
           <nav
             id="mobile-nav"
-            aria-label="Main"
+            aria-label={t('nav.mainNavigation')}
             className="animate-enter absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col border-r border-line bg-surface"
           >
             <div className="flex items-center justify-between border-b border-line px-4 py-3.5">
@@ -86,7 +91,7 @@ export default function AppShell() {
                 className="rounded-xs p-1.5 text-muted transition-colors hover:bg-sunken hover:text-ink"
               >
                 <CloseIcon className="h-5 w-5" />
-                <span className="sr-only">Close menu</span>
+                <span className="sr-only">{t('nav.closeMenu')}</span>
               </button>
             </div>
             <NavLinks />
@@ -155,9 +160,11 @@ function Wordmark() {
 }
 
 function NavLinks() {
+  const { t } = useI18n()
+
   return (
-    <nav aria-label="Main" className="flex-1 space-y-1 px-3 py-2 lg:px-3">
-      {NAV.map(({ to, label, icon: Icon }) => (
+    <nav aria-label={t('nav.mainNavigation')} className="flex-1 space-y-1 px-3 py-2 lg:px-3">
+      {NAV.map(({ to, labelKey, icon: Icon }) => (
         <NavLink
           key={to}
           to={to}
@@ -173,7 +180,7 @@ function NavLinks() {
           {({ isActive }) => (
             <>
               <Icon className={cx('h-[18px] w-[18px]', isActive ? 'text-accent' : 'text-faint')} />
-              {label}
+              {t(labelKey)}
             </>
           )}
         </NavLink>
@@ -183,7 +190,9 @@ function NavLinks() {
 }
 
 function UserPanel({ displayName, email, onSettings, onLogout }) {
-  const label = displayName || email || 'Signed in'
+  const { t } = useI18n()
+
+  const label = displayName || email || t('nav.signedIn')
   const initials = (displayName || email || '?')
     .split(/[\s@.]+/)
     .filter(Boolean)
@@ -219,11 +228,11 @@ function UserPanel({ displayName, email, onSettings, onLogout }) {
         onClick={onSettings}
       >
         <SettingsIcon className="h-4 w-4" />
-        Settings
+        {t('nav.settings')}
       </Button>
       <Button variant="ghost" size="sm" className="mt-1 w-full justify-start" onClick={onLogout}>
         <LogoutIcon className="h-4 w-4" />
-        Sign out
+        {t('auth.signOut')}
       </Button>
     </div>
   )

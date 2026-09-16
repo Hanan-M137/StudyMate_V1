@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useI18n } from '../context/I18nContext'
 import { getErrorMessage } from '../lib/errors'
 import { Button, Field, Input, InlineError } from '../components/ui'
 import AuthLayout from './AuthLayout'
 
 export default function Login() {
   const { login, isAuthenticated } = useAuth()
+  const { t } = useI18n()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -25,7 +27,7 @@ export default function Login() {
       await login({ email, password })
       navigate(location.state?.from || '/documents', { replace: true })
     } catch (err) {
-      setError(getErrorMessage(err, 'Could not sign in.'))
+      setError(getErrorMessage(err, t('auth.couldNotSignIn')))
     } finally {
       setSubmitting(false)
     }
@@ -33,35 +35,35 @@ export default function Login() {
 
   return (
     <AuthLayout
-      title="Welcome back"
-      subtitle="Sign in with the email and password you registered with."
+      title={t('auth.welcomeBack')}
+      subtitle={t('auth.signInSubtitle')}
       footer={
         <p className="type-small text-muted">
-          No account yet?{' '}
+          {t('auth.noAccountYet')}{' '}
           <Link
             to="/register"
             className="font-medium text-accent underline underline-offset-4 hover:text-accent-hover"
           >
-            Create one
+            {t('auth.createOne')}
           </Link>
         </p>
       }
     >
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-        <Field label="Email" required>
+        <Field label={t('auth.email')} required>
           {(field) => (
             <Input
               {...field}
               type="email"
               autoComplete="email"
-              placeholder="you@university.edu"
+              placeholder={t('auth.emailPlaceholder')}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
           )}
         </Field>
 
-        <Field label="Password" required>
+        <Field label={t('auth.password')} required>
           {(field) => (
             <Input
               {...field}
@@ -76,7 +78,7 @@ export default function Login() {
         <InlineError message={error} />
 
         <Button type="submit" size="lg" className="w-full" loading={submitting}>
-          Sign in
+          {t('auth.signIn')}
         </Button>
       </form>
     </AuthLayout>

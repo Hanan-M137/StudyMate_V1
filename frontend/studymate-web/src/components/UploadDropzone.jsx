@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { useI18n } from '../context/I18nContext'
 import { Button, cx } from './ui'
 import { UploadIcon } from './icons'
 
@@ -7,6 +8,7 @@ import { UploadIcon } from './icons'
  * Purely presentational - the parent owns validation and the upload request.
  */
 export default function UploadDropzone({ onFile, uploading, progress = 0, disabled = false }) {
+  const { t } = useI18n()
   const inputRef = useRef(null)
   const [dragging, setDragging] = useState(false)
   const [fileName, setFileName] = useState(null)
@@ -57,25 +59,28 @@ export default function UploadDropzone({ onFile, uploading, progress = 0, disabl
       </div>
 
       <label htmlFor="pdf-upload" className="type-title block cursor-pointer text-ink">
-        Drop a PDF here
+        {t('upload.dropHere')}
       </label>
+      {/* Three keys for one sentence, because the button sits inside it. The
+          pieces are kept in the same order and with the same spacing as the
+          markup had, so nothing about the line moves. */}
       <p className="type-small mt-1 text-muted">
-        or{' '}
+        {t('upload.or')}{' '}
         <button
           type="button"
           className="font-medium text-accent underline underline-offset-4 hover:text-accent-hover"
           onClick={() => inputRef.current?.click()}
           disabled={disabled || uploading}
         >
-          browse your files
+          {t('upload.browse')}
         </button>
-        . PDF only.
+        {t('upload.pdfOnly')}
       </p>
 
       {uploading ? (
         <div className="mx-auto mt-5 max-w-sm text-left">
           <div className="type-micro mb-1.5 flex items-center justify-between text-muted">
-            <span className="truncate pr-3">{fileName || 'Uploading'}</span>
+            <span className="truncate pr-3">{fileName || t('upload.uploading')}</span>
             <span className="tabular-nums">{progress}%</span>
           </div>
           <div
@@ -84,7 +89,7 @@ export default function UploadDropzone({ onFile, uploading, progress = 0, disabl
             aria-valuenow={progress}
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-label="Upload progress"
+            aria-label={t('upload.progress')}
           >
             <div
               className="h-full rounded-full bg-accent transition-[width] duration-200"

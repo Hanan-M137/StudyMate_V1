@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { getErrorMessage } from '../lib/errors'
+import { useI18n } from '../context/I18nContext'
 import { PinIcon } from './icons'
 import { cx } from './ui'
 
@@ -19,8 +20,17 @@ import { cx } from './ui'
  * refuses. The new state is shown while the request is in flight and dropped
  * again if it fails, so the control ends up back where it started with the
  * reason beside it, rather than claiming a pin the server never stored.
+ *
+ * `noun` names the kind of row - 'quiz' or 'conversation' - and selects a set
+ * of whole sentences rather than being dropped into a shared one. English can
+ * build "Pin this quiz" and "Pin this conversation" from one template and two
+ * nouns; other languages inflect the rest of the sentence with the noun, so a
+ * shared template would be a key that cannot be translated for both. A kind
+ * with no sentences written for it shows its key on screen, which is the
+ * missing-translation behaviour everywhere else in the app.
  */
 export default function PinButton({ pinned, noun, onToggle }) {
+  const { t } = useI18n()
   const [requested, setRequested] = useState(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
@@ -37,7 +47,7 @@ export default function PinButton({ pinned, noun, onToggle }) {
     try {
       await onToggle(next)
     } catch (err) {
-      setError(getErrorMessage(err, `Could not ${next ? 'pin' : 'unpin'} this ${noun}.`))
+      setError(getErrorMessage(err, t(`pin.${next ? 'pinFailed' : 'unpinFailed'}.${noun}`)))
     } finally {
       /* Either the parent has the server's answer in its own state now, or the
          request failed and the control belongs back at the old state. Both are
@@ -54,7 +64,7 @@ export default function PinButton({ pinned, noun, onToggle }) {
         onClick={handleClick}
         disabled={saving}
         aria-pressed={showPinned}
-        title={showPinned ? `Unpin this ${noun}` : `Pin this ${noun} to the top`}
+        title={showPinned ? t(`pin.unpin.${noun}`) : t(`pin.pinToTop.${noun}`)}
         className={cx(
           'rounded-sm p-1.5 transition-colors disabled:opacity-60',
           showPinned
@@ -63,7 +73,7 @@ export default function PinButton({ pinned, noun, onToggle }) {
         )}
       >
         <span className="sr-only">
-          {showPinned ? `Unpin this ${noun}` : `Pin this ${noun}`}
+          {showPinned ? t(`pin.unpin.${noun}`) : t(`pin.pin.${noun}`)}
         </span>
         <PinIcon filled={showPinned} className="h-4 w-4" />
       </button>

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useI18n } from '../context/I18nContext'
 import { ChevronIcon } from './icons'
 import { cx } from './ui'
 
@@ -18,6 +19,7 @@ import { cx } from './ui'
  * and the passage itself are shown instead, and both are true.
  */
 export default function SourceList({ sources }) {
+  const { t } = useI18n()
   const [openIndex, setOpenIndex] = useState(null)
 
   if (!Array.isArray(sources) || sources.length === 0) return null
@@ -25,7 +27,9 @@ export default function SourceList({ sources }) {
   return (
     <div className="mt-3.5 border-t border-line pt-3">
       <p className="type-eyebrow mb-2">
-        {sources.length} {sources.length === 1 ? 'citation' : 'citations'}
+        {sources.length === 1
+          ? t('sources.countOne', { count: sources.length })
+          : t('sources.countOther', { count: sources.length })}
       </p>
       <ul className="space-y-1.5">
         {sources.map((source, index) => {
@@ -51,7 +55,9 @@ export default function SourceList({ sources }) {
                   )}
                 />
                 <span className="type-micro font-semibold text-ink-soft">
-                  {parsed.page != null ? `Page ${parsed.page}` : `Source ${index + 1}`}
+                  {parsed.page != null
+                    ? t('sources.page', { page: parsed.page })
+                    : t('sources.source', { number: index + 1 })}
                 </span>
               </button>
 

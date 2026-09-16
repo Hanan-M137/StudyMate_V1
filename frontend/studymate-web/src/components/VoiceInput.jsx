@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useI18n } from '../context/I18nContext'
 import { MicIcon } from './icons'
 import { cx } from './ui'
 
@@ -71,6 +72,7 @@ const FALLBACK_ERROR = 'The microphone stopped unexpectedly. You can type instea
  *                 own onChange would be
  */
 export default function VoiceInput({ value, onChange, className }) {
+  const { t } = useI18n()
   const [listening, setListening] = useState(false)
   const [language, setLanguage] = useState(DEFAULT_LANGUAGE)
   const [interim, setInterim] = useState('')
@@ -188,7 +190,7 @@ export default function VoiceInput({ value, onChange, className }) {
       recognition.start()
     } catch {
       recognitionRef.current = null
-      setError('The microphone could not be started. Try again in a moment.')
+      setError(t('voice.couldNotStart'))
       return
     }
 
@@ -222,12 +224,12 @@ export default function VoiceInput({ value, onChange, className }) {
         )}
       >
         <MicIcon className="h-4 w-4" />
-        {listening ? 'Stop listening' : 'Speak'}
+        {listening ? t('voice.stopListening') : t('voice.speak')}
       </button>
 
       <div
         role="group"
-        aria-label="Speech recognition language"
+        aria-label={t('voice.languageGroup')}
         className="mt-2 flex overflow-hidden rounded-sm border border-line-strong"
       >
         {LANGUAGES.map((option) => (

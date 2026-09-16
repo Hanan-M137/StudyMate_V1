@@ -1,7 +1,10 @@
 import { Link } from 'react-router-dom'
+import { useI18n } from '../context/I18nContext'
 
 /** Two-panel sign-in shell: quiet editorial panel on the left, form on the right. */
 export default function AuthLayout({ title, subtitle, children, footer }) {
+  const { t } = useI18n()
+
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-2">
       <aside className="hidden flex-col justify-between bg-accent px-10 py-12 text-on-accent lg:flex">
@@ -26,16 +29,11 @@ export default function AuthLayout({ title, subtitle, children, footer }) {
         </Link>
 
         <div className="measure">
-          <p className="font-display text-3xl leading-tight">
-            Upload your course PDFs, then ask them questions.
-          </p>
-          <p className="mt-4 text-sm leading-relaxed text-on-accent/80">
-            Every answer is grounded in your own material and cites the page it came from. Turn any
-            document into a quiz when it is time to revise.
-          </p>
+          <p className="font-display text-3xl leading-tight">{t('auth.pitchTitle')}</p>
+          <p className="mt-4 text-sm leading-relaxed text-on-accent/80">{t('auth.pitchBody')}</p>
         </div>
 
-        <p className="type-micro text-on-accent/60">AI study assistant for university students</p>
+        <p className="type-micro text-on-accent/60">{t('auth.pitchFooter')}</p>
       </aside>
 
       <main className="flex min-h-screen items-center justify-center px-4 py-12 sm:px-8">

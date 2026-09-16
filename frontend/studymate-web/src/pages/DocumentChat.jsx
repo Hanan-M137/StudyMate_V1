@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { getDocument, isPending, isReady } from '../api/documents'
 import { getConversation } from '../api/conversations'
 import { sendChatMessage } from '../api/chat'
+import { useI18n } from '../context/I18nContext'
 import { getErrorMessage } from '../lib/errors'
 import SourceList from '../components/SourceList'
 import VoiceInput from '../components/VoiceInput'
@@ -18,11 +19,10 @@ import {
   cx,
 } from '../components/ui'
 
-const PROMPT_IDEAS = [
-  'Summarise the key points of section 1',
-  'Explain this in simpler terms',
-  'What are the main figures mentioned?',
-]
+/* Keys rather than the sentences themselves: the list is built out here,
+   where a hook cannot run, and each one is resolved as it is rendered - and
+   again as it is sent, because tapping one sends it as the question. */
+const PROMPT_IDEA_KEYS = ['chat.ideaSummarise', 'chat.ideaSimpler', 'chat.ideaFigures']
 
 function prefersReducedMotion() {
   return (
@@ -33,6 +33,7 @@ function prefersReducedMotion() {
 
 export default function DocumentChat() {
   const { id: documentId } = useParams()
+  const { t } = useI18n()
 
   /* A ?conversation= parameter means an existing thread is being reopened from
      the conversations list. Without it this page starts a new thread, which is
@@ -92,7 +93,7 @@ export default function DocumentChat() {
           conversation.documentId &&
           String(conversation.documentId) !== String(documentId)
         ) {
-          setSendError('That conversation belongs to a different document.')
+          setSendError(t('chat.wrongDocument'))
           return
         }
 
@@ -101,7 +102,7 @@ export default function DocumentChat() {
       })
       .catch((err) => {
         if (!cancelled) {
-          setSendError(getErrorMessage(err, 'Could not load that conversation.'))
+          setSendError(getErrorMessage(err, t('chat.couldNotLoadConversation')))
         }
       })
       .finally(() => {
@@ -111,7 +112,7 @@ export default function DocumentChat() {
     return () => {
       cancelled = true
     }
-  }, [documentId, resumeId])
+  }, [documentId, resumeId, t])
 
   const load = useCallback(async () => {
     setLoadError(null)
@@ -119,11 +120,11 @@ export default function DocumentChat() {
     try {
       setDoc(await getDocument(documentId))
     } catch (err) {
-      setLoadError(getErrorMessage(err, 'Could not load this document.'))
+      setLoadError(getErrorMessage(err, t('chat.couldNotLoadDocument')))
     } finally {
       setLoading(false)
     }
-  }, [documentId])
+  }, [documentId, t])
 
   useEffect(() => {
     load()
@@ -175,7 +176,7 @@ export default function DocumentChat() {
         },
       ])
     } catch (err) {
-      setSendError(getErrorMessage(err, 'The assistant could not answer.'))
+      setSendError(getErrorMessage(err, t('chat.couldNotAnswer')))
       setDraft(message)
       setMessages((current) => current.slice(0, -1))
     } finally {
@@ -193,9 +194,9 @@ export default function DocumentChat() {
     inputRef.current?.focus()
   }
 
-  if (loading) return <LoadingState label="Loading document" rows={2} />
+  if (loading) return <LoadingState label={t('chat.loadingDocument')} rows={2} />
   if (loadError) return <ErrorState message={loadError} onRetry={load} />
-  if (!doc) return <EmptyState title="Document not found" />
+  if (!doc) return <EmptyState title={t('chat.documentNotFound')} />
 
   const ready = isReady(doc.status)
 
@@ -207,18 +208,20 @@ export default function DocumentChat() {
             to="/documents"
             className="type-micro font-medium text-muted transition-colors hover:text-ink"
           >
-            &larr; All documents
+            {t('chat.allDocuments')}
           </Link>
           <h1 className="type-title mt-1.5 truncate">{doc.title}</h1>
           <p className="type-micro truncate text-faint">{doc.filename}</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* The pending side is the server's own word for the state, shown
+              as it arrived; only "Ready" is ours to say. */}
           <Badge tone={ready ? 'accent' : 'pending'} dot>
-            {ready ? 'Ready' : doc.status}
+            {ready ? t('documents.statusReady') : doc.status}
           </Badge>
           {messages.length > 0 ? (
             <Button variant="secondary" size="sm" onClick={startNewConversation}>
-              New thread
+              {t('chat.newThread')}
             </Button>
           ) : null}
         </div>
@@ -226,33 +229,30 @@ export default function DocumentChat() {
 
       {!ready ? (
         <div className="mb-5 rounded-lg border border-pending-line bg-pending-soft px-4 py-3.5">
-          <p className="text-sm font-semibold text-pending">Still indexing</p>
-          <p className="type-small mt-1 text-pending/90">
-            Chat opens as soon as this document finishes processing. The status above refreshes on
-            its own.
-          </p>
+          <p className="text-sm font-semibold text-pending">{t('chat.stillIndexing')}</p>
+          <p className="type-small mt-1 text-pending/90">{t('chat.stillIndexingBody')}</p>
         </div>
       ) : null}
 
       <div className="flex-1">
         {resuming ? (
-          <LoadingState label="Loading conversation" rows={2} />
+          <LoadingState label={t('conversations.loadingOne')} rows={2} />
         ) : messages.length === 0 ? (
           <EmptyState
             icon={<ChatIcon className="h-5 w-5" />}
-            title="Ask your first question"
-            description="Answers are drawn only from this document and cite the page they came from."
+            title={t('chat.emptyTitle')}
+            description={t('chat.emptyDescription')}
             action={
               ready ? (
                 <div className="flex flex-wrap justify-center gap-2">
-                  {PROMPT_IDEAS.map((idea) => (
+                  {PROMPT_IDEA_KEYS.map((ideaKey) => (
                     <button
-                      key={idea}
+                      key={ideaKey}
                       type="button"
-                      onClick={() => send(idea)}
+                      onClick={() => send(t(ideaKey))}
                       className="type-small rounded-full border border-line bg-surface px-3.5 py-1.5 text-ink-soft transition-colors hover:border-accent-line hover:bg-accent-soft hover:text-accent"
                     >
-                      {idea}
+                      {t(ideaKey)}
                     </button>
                   ))}
                 </div>
@@ -272,7 +272,7 @@ export default function DocumentChat() {
 
       {sendError ? (
         <div className="mt-5">
-          <ErrorState message={sendError} title="Message not sent" />
+          <ErrorState message={sendError} title={t('chat.messageNotSent')} />
         </div>
       ) : null}
 
@@ -284,7 +284,7 @@ export default function DocumentChat() {
         className="sticky bottom-0 mt-5 flex items-start gap-2 border-t border-line bg-paper/95 py-4 backdrop-blur"
       >
         <label htmlFor="chat-input" className="sr-only">
-          Ask about this document
+          {t('chat.inputLabel')}
         </label>
         <Input
           id="chat-input"
@@ -292,7 +292,9 @@ export default function DocumentChat() {
           className="min-w-0 flex-1"
           value={draft}
           disabled={!ready || sending || resuming}
-          placeholder={ready ? 'Ask about this document...' : 'Waiting for processing...'}
+          placeholder={
+            ready ? t('chat.inputPlaceholder') : t('chat.inputPlaceholderWaiting')
+          }
           onChange={(event) => setDraft(event.target.value)}
         />
 
@@ -320,7 +322,7 @@ export default function DocumentChat() {
           disabled={!ready || sending || resuming || !draft.trim()}
           loading={sending}
         >
-          Send
+          {t('chat.send')}
         </Button>
       </form>
     </div>
@@ -328,6 +330,8 @@ export default function DocumentChat() {
 }
 
 export function MessageBubble({ message }) {
+  const { t } = useI18n()
+
   const isUser = message.role === 'user'
 
   if (isUser) {
@@ -350,7 +354,7 @@ export function MessageBubble({ message }) {
       </span>
       <Card className="measure min-w-0 flex-1 px-4 py-3.5">
         <p className="type-body whitespace-pre-line text-ink">
-          {message.content || <em className="text-muted">(empty answer)</em>}
+          {message.content || <em className="text-muted">{t('chat.emptyAnswer')}</em>}
         </p>
 
         <SourceList sources={message.sources} />
@@ -360,6 +364,8 @@ export function MessageBubble({ message }) {
 }
 
 function TypingIndicator() {
+  const { t } = useI18n()
+
   return (
     <li className="flex gap-3" role="status" aria-live="polite">
       <span
@@ -369,7 +375,7 @@ function TypingIndicator() {
         <SparkIcon className="h-4 w-4" />
       </span>
       <Card className="px-4 py-3.5">
-        <span className="sr-only">Searching your document</span>
+        <span className="sr-only">{t('chat.searching')}</span>
         <span className="flex items-center gap-1.5" aria-hidden="true">
           {[0, 1, 2].map((index) => (
             <span

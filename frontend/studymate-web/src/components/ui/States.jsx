@@ -1,3 +1,4 @@
+import { useI18n } from '../../context/I18nContext'
 import Button from './Button'
 import Card from './Card'
 import Spinner from './Spinner'
@@ -9,12 +10,17 @@ export function Skeleton({ className }) {
 }
 
 /** Loading placeholder that mirrors the shape of the content it replaces. */
-export function LoadingState({ label = 'Loading', rows = 3 }) {
+export function LoadingState({ label, rows = 3 }) {
+  /* Resolved here rather than as a default parameter: a hook cannot run in
+     the parameter list, and a caller that passes its own label still wins. */
+  const { t } = useI18n()
+  const text = label ?? t('common.loading')
+
   return (
     <div className="space-y-3" role="status" aria-live="polite">
       <p className="type-small flex items-center gap-2 text-muted">
         <Spinner className="h-3.5 w-3.5" />
-        <span>{label}</span>
+        <span>{text}</span>
       </p>
       {Array.from({ length: rows }).map((_, index) => (
         <Card key={index} className="p-5">
@@ -49,7 +55,11 @@ export function EmptyState({ icon, title, description, action, className }) {
 }
 
 /** Multi-line safe: 422 details arrive joined with newlines. */
-export function ErrorState({ message, onRetry, title = 'Something went wrong' }) {
+export function ErrorState({ message, onRetry, title }) {
+  /* Before the early return, because a hook cannot be skipped. */
+  const { t } = useI18n()
+  const heading = title ?? t('common.somethingWentWrong')
+
   if (!message) return null
   return (
     <div
@@ -68,11 +78,11 @@ export function ErrorState({ message, onRetry, title = 'Something went wrong' })
           <circle cx="10" cy="13.6" r="0.9" fill="currentColor" />
         </svg>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-danger">{title}</p>
+          <p className="text-sm font-semibold text-danger">{heading}</p>
           <p className="type-small mt-1 whitespace-pre-line text-danger/90">{message}</p>
           {onRetry ? (
             <Button variant="secondary" size="sm" className="mt-3" onClick={onRetry}>
-              Try again
+              {t('common.tryAgain')}
             </Button>
           ) : null}
         </div>

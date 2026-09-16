@@ -1,6 +1,9 @@
+import { useI18n } from '../../context/I18nContext'
 import { cx } from './cx'
 
 export default function Spinner({ className, label }) {
+  const { t } = useI18n()
+
   return (
     <span className="inline-flex items-center gap-2">
       <svg
@@ -18,7 +21,7 @@ export default function Spinner({ className, label }) {
           strokeLinecap="round"
         />
       </svg>
-      {label ? <span>{label}</span> : <span className="sr-only">Loading</span>}
+      {label ? <span>{label}</span> : <span className="sr-only">{t('common.loading')}</span>}
     </span>
   )
 }

@@ -10,6 +10,7 @@ import {
   renameDocument,
   uploadDocument,
 } from '../api/documents'
+import { useI18n } from '../context/I18nContext'
 import { getErrorMessage } from '../lib/errors'
 import PageHeader from '../components/PageHeader'
 import UploadDropzone from '../components/UploadDropzone'
@@ -30,6 +31,8 @@ import {
 const POLL_INTERVAL_MS = 4000
 
 export default function Documents() {
+  const { t } = useI18n()
+
   const [documents, setDocuments] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -47,11 +50,11 @@ export default function Documents() {
     try {
       setDocuments(await listDocuments())
     } catch (err) {
-      setError(getErrorMessage(err, 'Could not load your documents.'))
+      setError(getErrorMessage(err, t('documents.couldNotLoad')))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     load()
@@ -86,7 +89,7 @@ export default function Documents() {
     setUploadError(null)
 
     if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-      setUploadError('Only PDF files can be uploaded.')
+      setUploadError(t('documents.onlyPdf'))
       return
     }
 
@@ -98,7 +101,7 @@ export default function Documents() {
       })
       setDocuments((current) => [created, ...current.filter((doc) => doc.id !== created.id)])
     } catch (err) {
-      setUploadError(getErrorMessage(err, 'Upload failed.'))
+      setUploadError(getErrorMessage(err, t('documents.uploadFailedMessage')))
     } finally {
       setUploading(false)
       setProgress(0)
@@ -111,7 +114,7 @@ export default function Documents() {
       const updated = await renameDocument(documentId, title)
       setDocuments((current) => current.map((doc) => (doc.id === documentId ? updated : doc)))
     } catch (err) {
-      setRowError(getErrorMessage(err, 'Could not rename the document.'))
+      setRowError(getErrorMessage(err, t('documents.couldNotRename')))
       throw err
     }
   }
@@ -125,7 +128,7 @@ export default function Documents() {
       setDocuments((current) => current.filter((doc) => doc.id !== pendingDelete.id))
       setPendingDelete(null)
     } catch (err) {
-      setRowError(getErrorMessage(err, 'Could not delete the document.'))
+      setRowError(getErrorMessage(err, t('documents.couldNotDelete')))
       setPendingDelete(null)
     } finally {
       setDeleting(false)
@@ -137,38 +140,42 @@ export default function Documents() {
   return (
     <>
       <PageHeader
-        eyebrow="Library"
-        title="Documents"
-        description="Upload a PDF, wait for it to be indexed, then chat with it or turn it into a quiz."
+        eyebrow={t('documents.eyebrow')}
+        title={t('documents.title')}
+        description={t('documents.description')}
       />
 
       <div className="space-y-6">
         <div className="space-y-3">
           <UploadDropzone onFile={handleUpload} uploading={uploading} progress={progress} />
-          {uploadError ? <ErrorState title="Upload failed" message={uploadError} /> : null}
+          {uploadError ? (
+            <ErrorState title={t('documents.uploadFailedTitle')} message={uploadError} />
+          ) : null}
         </div>
 
         {rowError ? <ErrorState message={rowError} /> : null}
 
         {loading ? (
-          <LoadingState label="Loading your documents" rows={3} />
+          <LoadingState label={t('documents.loading')} rows={3} />
         ) : error ? (
           <ErrorState message={error} onRetry={load} />
         ) : documents.length === 0 ? (
           <EmptyState
             icon={<DocumentIcon className="h-5 w-5" />}
-            title="No documents yet"
-            description="Drop your first lecture notes or textbook chapter above. Processing usually takes a few seconds."
+            title={t('documents.emptyTitle')}
+            description={t('documents.emptyDescription')}
           />
         ) : (
           <section>
             <div className="mb-3 flex items-baseline justify-between">
               <h2 className="type-eyebrow">
-                {documents.length} {documents.length === 1 ? 'document' : 'documents'}
+                {documents.length === 1
+                  ? t('documents.countOne', { count: documents.length })
+                  : t('documents.countOther', { count: documents.length })}
               </h2>
               {readyCount < documents.length ? (
                 <span className="type-micro text-muted">
-                  {documents.length - readyCount} still processing
+                  {t('documents.stillProcessing', { count: documents.length - readyCount })}
                 </span>
               ) : null}
             </div>
@@ -188,9 +195,9 @@ export default function Documents() {
 
       <ConfirmDialog
         open={Boolean(pendingDelete)}
-        title="Delete this document?"
-        description={`"${pendingDelete?.title ?? ''}" will be removed, along with its conversations and quizzes. This cannot be undone.`}
-        confirmLabel="Delete document"
+        title={t('documents.deleteTitle')}
+        description={t('documents.deleteDescription', { title: pendingDelete?.title ?? '' })}
+        confirmLabel={t('documents.deleteConfirm')}
         busy={deleting}
         onConfirm={handleDelete}
         onCancel={() => setPendingDelete(null)}
@@ -200,6 +207,8 @@ export default function Documents() {
 }
 
 function DocumentRow({ doc, onRename, onRequestDelete }) {
+  const { t } = useI18n()
+
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState(doc.title)
   const [saving, setSaving] = useState(false)
@@ -236,7 +245,7 @@ function DocumentRow({ doc, onRename, onRequestDelete }) {
         {editing ? (
           <form onSubmit={save} className="flex flex-wrap items-center gap-2">
             <label htmlFor={`rename-${doc.id}`} className="sr-only">
-              Document title
+              {t('documents.renameLabel')}
             </label>
             <Input
               id={`rename-${doc.id}`}
@@ -252,7 +261,7 @@ function DocumentRow({ doc, onRename, onRequestDelete }) {
               }}
             />
             <Button type="submit" size="sm" loading={saving}>
-              Save
+              {t('common.save')}
             </Button>
             <Button
               type="button"
@@ -263,7 +272,7 @@ function DocumentRow({ doc, onRename, onRequestDelete }) {
                 setTitle(doc.title)
               }}
             >
-              Cancel
+              {t('common.cancel')}
             </Button>
           </form>
         ) : (
@@ -292,11 +301,11 @@ function DocumentRow({ doc, onRename, onRequestDelete }) {
                   className="inline-flex h-8 items-center gap-1.5 rounded-xs bg-accent px-3 text-[0.8125rem] font-medium text-on-accent transition-colors hover:bg-accent-hover"
                 >
                   <ChatIcon className="h-4 w-4" />
-                  Chat
+                  {t('documents.chat')}
                 </Link>
               ) : null}
               <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
-                Rename
+                {t('common.rename')}
               </Button>
               <Button
                 variant="ghost"
@@ -304,7 +313,7 @@ function DocumentRow({ doc, onRename, onRequestDelete }) {
                 className="text-danger hover:bg-danger-soft hover:text-danger"
                 onClick={onRequestDelete}
               >
-                Delete
+                {t('common.delete')}
               </Button>
             </div>
           </div>
@@ -312,14 +321,14 @@ function DocumentRow({ doc, onRename, onRequestDelete }) {
 
         {!editing && failed ? (
           <p className="type-small mt-3 rounded-xs bg-danger-soft px-3 py-2 text-danger">
-            Processing failed on the server. Delete this document and upload the PDF again.
+            {t('documents.processingFailed')}
           </p>
         ) : null}
 
         {!editing && !ready && !failed ? (
           <p className="type-small mt-3 flex items-center gap-2 rounded-xs bg-pending-soft px-3 py-2 text-pending">
             <Spinner className="h-3.5 w-3.5" />
-            Indexing in the background. This list refreshes every few seconds.
+            {t('documents.indexing')}
           </p>
         ) : null}
       </Card>
@@ -328,23 +337,27 @@ function DocumentRow({ doc, onRename, onRequestDelete }) {
 }
 
 function StatusBadge({ status }) {
+  const { t } = useI18n()
+
   if (isReady(status)) {
     return (
       <Badge tone="accent" dot>
-        Ready
+        {t('documents.statusReady')}
       </Badge>
     )
   }
   if (isFailed(status)) {
     return (
       <Badge tone="danger" dot>
-        Failed
+        {t('documents.statusFailed')}
       </Badge>
     )
   }
+  /* `status` is whatever the server called it and is shown exactly as it
+     arrived - the API's word, not ours. Only the fallback is interface text. */
   return (
     <Badge tone="pending" dot>
-      {status || 'Pending'}
+      {status || t('documents.statusPending')}
     </Badge>
   )
 }

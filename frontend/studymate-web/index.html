@@ -14,7 +14,7 @@
     <title>StudyMate</title>
 
     <!--
-      The theme, applied before the app bundle is fetched.
+      The theme and the language, applied before the app bundle is fetched.
 
       This has to run here rather than in React. The stylesheet's light
       values are the defaults, so a preference read after the app boots
@@ -22,8 +22,15 @@
       every page. Reading it in <head> means the very first paint is
       already the right colour.
 
-      It is deliberately duplicated: src/lib/theme.js holds the same logic
-      for the running app. Keep the key and the values in step.
+      The language is here for the same reason, only more so: `dir` mirrors
+      the entire layout, so a direction read after React mounts is not a
+      flash of the wrong colour but the whole page jumping from one side of
+      the screen to the other. Nothing flips until the Arabic exists, and
+      this is still where it has to be built.
+
+      It is deliberately duplicated: src/lib/theme.js and src/lib/language.js
+      hold the same logic for the running app. Keep the keys and the values
+      in step.
     -->
     <script>
       try {
@@ -40,6 +47,20 @@
         /* A private window, blocked site data, or no matchMedia. The page
            renders in the stylesheet's light default, which is exactly what
            it did before this script existed. */
+      }
+
+      try {
+        var storedLang = localStorage.getItem('studymate.lang')
+
+        /* English unless Arabic was actually chosen - the same rule as
+           getStoredLanguage(), and deliberately not navigator.language. */
+        var lang = storedLang === 'ar' ? 'ar' : 'en'
+
+        document.documentElement.lang = lang
+        document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr'
+      } catch (e) {
+        /* Storage unavailable. The document keeps the lang="en" written on
+           the <html> tag below, and its default left-to-right direction. */
       }
     </script>
   </head>

@@ -7,6 +7,7 @@ import {
   setConversationPinned,
 } from '../api/conversations'
 import { listDocuments } from '../api/documents'
+import { useI18n } from '../context/I18nContext'
 import { getErrorMessage } from '../lib/errors'
 import { sortPinnedFirst } from '../lib/pinned'
 import PageHeader from '../components/PageHeader'
@@ -31,10 +32,14 @@ const DOCUMENT_PARAM = 'document'
 
 /* A conversation whose document is not in the documents list - which in
    practice means the list itself failed to load, since deleting a document
-   deletes its conversations with it. */
-const UNNAMED_DOCUMENT = 'Untitled document'
+   deletes its conversations with it.
+
+   The key rather than the words: this is read while the groups are built, so
+   it is resolved there. */
+const UNNAMED_DOCUMENT_KEY = 'conversations.untitledDocument'
 
 export default function Conversations() {
+  const { t } = useI18n()
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedDocumentId = searchParams.get(DOCUMENT_PARAM) || ''
 
@@ -57,11 +62,11 @@ export default function Conversations() {
       setConversations(rows)
       setDocumentTitles(Object.fromEntries(docs.map((doc) => [doc.id, doc.title])))
     } catch (err) {
-      setError(getErrorMessage(err, 'Could not load your conversations.'))
+      setError(getErrorMessage(err, t('conversations.couldNotLoad')))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     load()
@@ -89,7 +94,7 @@ export default function Conversations() {
       if (!byDocument.has(key)) {
         byDocument.set(key, {
           documentId: key,
-          title: documentTitles[conversation.documentId] || UNNAMED_DOCUMENT,
+          title: documentTitles[conversation.documentId] || t(UNNAMED_DOCUMENT_KEY),
           conversations: [],
           latest: 0,
         })
@@ -101,7 +106,7 @@ export default function Conversations() {
     }
 
     return [...byDocument.values()].sort((a, b) => b.latest - a.latest)
-  }, [conversations, documentTitles])
+  }, [conversations, documentTitles, t])
 
   const selectedGroup = useMemo(
     () => groups.find((group) => group.documentId === selectedDocumentId) || null,
@@ -160,42 +165,46 @@ export default function Conversations() {
   return (
     <>
       <PageHeader
-        eyebrow="History"
-        title="Conversations"
-        description="Every thread you have started with a document, grouped by the document it came from. A conversation is titled with the first question you asked, and can be renamed."
+        eyebrow={t('conversations.eyebrow')}
+        title={t('conversations.title')}
+        description={t('conversations.description')}
       />
 
       {loading ? (
-        <LoadingState label="Loading conversations" rows={4} />
+        <LoadingState label={t('conversations.loading')} rows={4} />
       ) : error ? (
         <ErrorState message={error} onRetry={load} />
       ) : unknownDocument ? (
         <EmptyState
           icon={<DocumentIcon className="h-5 w-5" />}
-          title="That document is not here"
-          description="It may have been deleted, which takes its conversations with it. The documents you have talked to are listed on the way back."
+          title={t('conversations.unknownDocumentTitle')}
+          description={t('conversations.unknownDocumentDescription')}
           action={
             <Button variant="secondary" onClick={clearDocument}>
-              All documents
+              {t('conversations.allDocumentsButton')}
             </Button>
           }
         />
       ) : conversations.length === 0 ? (
         <EmptyState
           icon={<ChatIcon className="h-5 w-5" />}
-          title="No conversations yet"
-          description="Open a document that has finished processing and ask a question to start one."
+          title={t('conversations.emptyTitle')}
+          description={t('conversations.emptyDescription')}
         />
       ) : selectedGroup ? (
         <section>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="type-eyebrow">Conversations about {selectedGroup.title}</h2>
+            {/* The document's own title is the student's, so it is dropped
+                into the sentence rather than translated with it. */}
+            <h2 className="type-eyebrow">
+              {t('conversations.aboutDocument', { title: selectedGroup.title })}
+            </h2>
             <button
               type="button"
               onClick={clearDocument}
               className="type-small rounded-sm px-2 py-1 text-muted transition-colors hover:bg-sunken hover:text-ink"
             >
-              ← All documents
+              {t('conversations.allDocumentsBack')}
             </button>
           </div>
 
@@ -213,7 +222,7 @@ export default function Conversations() {
         </section>
       ) : (
         <section>
-          <h2 className="type-eyebrow mb-3">Your documents</h2>
+          <h2 className="type-eyebrow mb-3">{t('conversations.yourDocuments')}</h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {groups.map((group) => (
               <DocumentCard
@@ -238,6 +247,8 @@ export default function Conversations() {
  * from this page - so a card for it would be a dead end.
  */
 function DocumentCard({ title, conversationCount, onOpen }) {
+  const { t } = useI18n()
+
   return (
     <Card interactive>
       <button
@@ -254,7 +265,9 @@ function DocumentCard({ title, conversationCount, onOpen }) {
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-ink">{title}</span>
           <span className="type-micro block text-faint">
-            {conversationCount} {conversationCount === 1 ? 'conversation' : 'conversations'}
+            {conversationCount === 1
+              ? t('conversations.countOne', { count: conversationCount })
+              : t('conversations.countOther', { count: conversationCount })}
           </span>
         </span>
         <ChevronIcon className="h-4 w-4 shrink-0 text-faint" />
@@ -271,13 +284,15 @@ function ConversationList({
   onPinned,
   onDeleted,
 }) {
+  const { t } = useI18n()
+
   return (
     <ul className="space-y-2.5">
       {conversations.map((conversation, index) => (
         <li key={conversation.id ?? index}>
           <ConversationRow
             conversation={conversation}
-            fallbackTitle={`Conversation ${index + 1}`}
+            fallbackTitle={t('conversations.fallbackTitle', { number: index + 1 })}
             documentTitle={documentTitles[conversation.documentId] || null}
             showDocument={showDocument}
             onRenamed={onRenamed}
@@ -306,6 +321,8 @@ function ConversationRow({
   onPinned,
   onDeleted,
 }) {
+  const { t } = useI18n()
+
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(conversation.title ?? '')
   const [saving, setSaving] = useState(false)
@@ -323,7 +340,7 @@ function ConversationRow({
     const next = draft.trim()
 
     if (!next) {
-      setError('A conversation needs a title.')
+      setError(t('conversations.needsTitle'))
       return
     }
 
@@ -342,7 +359,7 @@ function ConversationRow({
       onRenamed(conversation.id, updated.title ?? next)
       setRenaming(false)
     } catch (err) {
-      setError(getErrorMessage(err, 'Could not rename this conversation.'))
+      setError(getErrorMessage(err, t('conversations.couldNotRename')))
     } finally {
       setSaving(false)
     }
@@ -356,12 +373,12 @@ function ConversationRow({
             <Input
               autoFocus
               value={draft}
-              aria-label="Conversation title"
+              aria-label={t('conversations.renameLabel')}
               onChange={(event) => setDraft(event.target.value)}
               className="min-w-0 flex-1"
             />
             <Button type="submit" size="sm" loading={saving}>
-              Save
+              {t('common.save')}
             </Button>
             <Button
               type="button"
@@ -370,7 +387,7 @@ function ConversationRow({
               disabled={saving}
               onClick={() => setRenaming(false)}
             >
-              Cancel
+              {t('common.cancel')}
             </Button>
           </div>
           {/* In the row, not at the top of the page: the row is what failed. */}
@@ -429,7 +446,7 @@ function ConversationRow({
                 onClick={startRenaming}
                 className="type-micro rounded-sm px-2 py-1 text-muted transition-colors hover:bg-sunken hover:text-ink"
               >
-                Rename
+                {t('common.rename')}
               </button>
               {error ? <p className="type-micro mt-1 text-danger">{error}</p> : null}
             </div>
@@ -453,6 +470,8 @@ function ConversationRow({
  * because unpinning costs nothing.
  */
 function DeleteConversationButton({ conversation, onDeleted }) {
+  const { t } = useI18n()
+
   const [confirming, setConfirming] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState(null)
@@ -464,7 +483,7 @@ function DeleteConversationButton({ conversation, onDeleted }) {
       await deleteConversation(conversation.id)
       onDeleted(conversation.id)
     } catch (err) {
-      setError(getErrorMessage(err, 'Could not delete this conversation.'))
+      setError(getErrorMessage(err, t('conversations.couldNotDelete')))
       setDeleting(false)
       setConfirming(false)
     }
@@ -478,7 +497,7 @@ function DeleteConversationButton({ conversation, onDeleted }) {
           onClick={() => setConfirming(true)}
           className="type-micro rounded-sm px-2 py-1 text-muted transition-colors hover:bg-sunken hover:text-danger"
         >
-          Delete
+          {t('common.delete')}
         </button>
         {error ? <p className="type-micro mt-1 text-danger">{error}</p> : null}
       </div>
@@ -487,14 +506,14 @@ function DeleteConversationButton({ conversation, onDeleted }) {
 
   return (
     <div className="flex shrink-0 items-center gap-2">
-      <span className="type-micro text-muted">Delete this thread and its messages?</span>
+      <span className="type-micro text-muted">{t('conversations.confirmDelete')}</span>
       <button
         type="button"
         onClick={handleDelete}
         disabled={deleting}
         className="type-micro rounded-sm px-2 py-1 font-semibold text-danger transition-colors hover:bg-danger-soft disabled:opacity-60"
       >
-        {deleting ? 'Deleting...' : 'Yes, delete'}
+        {deleting ? t('common.deleting') : t('common.yesDelete')}
       </button>
       <button
         type="button"
@@ -502,7 +521,7 @@ function DeleteConversationButton({ conversation, onDeleted }) {
         disabled={deleting}
         className="type-micro rounded-sm px-2 py-1 text-muted transition-colors hover:bg-sunken hover:text-ink disabled:opacity-60"
       >
-        Cancel
+        {t('common.cancel')}
       </button>
     </div>
   )

@@ -7,6 +7,7 @@ import {
   listQuizAttempts,
   submitQuizAttempt,
 } from '../api/quizzes'
+import { useI18n } from '../context/I18nContext'
 import { getErrorMessage } from '../lib/errors'
 import { CheckIcon, CloseIcon } from '../components/icons'
 import {
@@ -99,6 +100,8 @@ export default function QuizTake() {
 }
 
 function QuizTakePage({ quizId }) {
+  const { t } = useI18n()
+
   const [quiz, setQuiz] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -126,11 +129,11 @@ function QuizTakePage({ quizId }) {
       // falls back to empty rather than becoming a page error.
       setAttempts(await listQuizAttempts(quizId).catch(() => []))
     } catch (err) {
-      setError(getErrorMessage(err, 'Could not load this quiz.'))
+      setError(getErrorMessage(err, t('quiz.couldNotLoadOne')))
     } finally {
       setLoading(false)
     }
-  }, [quizId])
+  }, [quizId, t])
 
   useEffect(() => {
     load()
@@ -202,15 +205,15 @@ function QuizTakePage({ quizId }) {
           : 'smooth',
       })
     } catch (err) {
-      setSubmitError(getErrorMessage(err, 'Could not submit your answers.'))
+      setSubmitError(getErrorMessage(err, t('quiz.couldNotSubmit')))
     } finally {
       setSubmitting(false)
     }
   }
 
-  if (loading) return <LoadingState label="Loading quiz" rows={3} />
+  if (loading) return <LoadingState label={t('quiz.loadingOne')} rows={3} />
   if (error) return <ErrorState message={error} onRetry={load} />
-  if (!quiz) return <EmptyState title="Quiz not found" />
+  if (!quiz) return <EmptyState title={t('quiz.notFound')} />
 
   const progress = questions.length ? Math.round((answeredCount / questions.length) * 100) : 0
 
@@ -224,13 +227,14 @@ function QuizTakePage({ quizId }) {
             to="/quizzes"
             className="type-micro font-medium text-muted transition-colors hover:text-ink"
           >
-            &larr; All quizzes
+            {t('quiz.allQuizzes')}
           </Link>
           <h1 className="type-display mt-1.5">{quiz.title}</h1>
           <p className="type-small mt-1 flex flex-wrap items-center gap-x-1.5 text-muted">
             <span>
-              {questions.length} {questions.length === 1 ? 'question' : 'questions'} &middot; mixed
-              question types
+              {questions.length === 1
+                ? t('quiz.headerCountOne', { count: questions.length })
+                : t('quiz.headerCountOther', { count: questions.length })}
             </span>
 
             {/* no-print in its own right, not only through the header: a
@@ -240,7 +244,7 @@ function QuizTakePage({ quizId }) {
             <span
               className="no-print tabular-nums"
               role="timer"
-              aria-label={result ? 'Time taken' : 'Time elapsed'}
+              aria-label={result ? t('quiz.timeTaken') : t('quiz.timeElapsed')}
             >
               {formatDuration(elapsed)}
             </span>
@@ -253,7 +257,7 @@ function QuizTakePage({ quizId }) {
             page is showing, which is the point: a worksheet before the quiz
             is submitted, the marked paper after. */}
         <Button size="lg" onClick={() => window.print()}>
-          Print
+          {t('quiz.print')}
         </Button>
       </header>
 
@@ -273,7 +277,7 @@ function QuizTakePage({ quizId }) {
         <div className="no-print sticky top-0 z-10 -mx-4 mb-6 border-b border-line bg-paper/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10">
           <div className="type-micro mb-1.5 flex items-center justify-between text-muted">
             <span>
-              {answeredCount} of {questions.length} answered
+              {t('quiz.answeredOf', { answered: answeredCount, total: questions.length })}
             </span>
             <span className="tabular-nums">{progress}%</span>
           </div>
@@ -283,7 +287,7 @@ function QuizTakePage({ quizId }) {
             aria-valuenow={answeredCount}
             aria-valuemin={0}
             aria-valuemax={questions.length}
-            aria-label="Questions answered"
+            aria-label={t('quiz.progressLabel')}
           >
             <div
               className="h-full rounded-full bg-accent transition-[width] duration-200"
@@ -295,11 +299,11 @@ function QuizTakePage({ quizId }) {
 
       {questions.length === 0 ? (
         <EmptyState
-          title="This quiz has no questions"
-          description="The API returned no questions for this quiz."
+          title={t('quiz.noQuestionsTitle')}
+          description={t('quiz.noQuestionsDescription')}
           action={
             <Button variant="secondary" onClick={load}>
-              Reload
+              {t('common.reload')}
             </Button>
           }
         />
@@ -325,11 +329,11 @@ function QuizTakePage({ quizId }) {
           {!result ? (
             <div className="no-print flex flex-wrap items-center gap-3 pt-1">
               <Button type="submit" size="lg" loading={submitting} disabled={answeredCount === 0}>
-                Submit answers
+                {t('quiz.submit')}
               </Button>
               {answeredCount < questions.length ? (
                 <span className="type-small text-muted">
-                  {questions.length - answeredCount} unanswered
+                  {t('quiz.unanswered', { count: questions.length - answeredCount })}
                 </span>
               ) : null}
             </div>
@@ -344,13 +348,13 @@ function QuizTakePage({ quizId }) {
                   restartTimer()
                 }}
               >
-                Retake quiz
+                {t('quiz.retake')}
               </Button>
               <Link
                 to="/quizzes"
                 className="inline-flex h-10 items-center rounded-sm px-4 text-sm font-medium text-ink-soft transition-colors hover:bg-sunken hover:text-ink"
               >
-                Back to quizzes
+                {t('quiz.backToQuizzes')}
               </Link>
             </div>
           )}
@@ -361,6 +365,8 @@ function QuizTakePage({ quizId }) {
 }
 
 function QuestionCard({ index, total, question, value, locked, feedback, onChange }) {
+  const { t } = useI18n()
+
   /* Three outcomes, not two: a short answer can be partially right, and the
      student is told which part they got. `correct` is kept as the fallback so
      an older response without `verdict` still renders. */
@@ -384,13 +390,15 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
       )}
     >
       <legend className="sr-only">
-        Question {index + 1} of {total}
+        {t('quiz.questionOf', { number: index + 1, total })}
       </legend>
 
       <div className="mb-3.5 flex items-start justify-between gap-4">
         <p className="measure type-body font-medium text-ink">
           <span className="mr-2 text-faint tabular-nums">{index + 1}.</span>
-          {question.text || <em className="text-muted">(no question text returned)</em>}
+          {/* The question itself is the generator's text, shown as it was
+              written. Only the note standing in for a missing one is ours. */}
+          {question.text || <em className="text-muted">{t('quiz.noQuestionText')}</em>}
         </p>
         <Badge
           tone={
@@ -408,7 +416,7 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
       {question.isFreeText ? (
         <div className="measure">
           <label htmlFor={`answer-${question.id}`} className="sr-only">
-            Your answer
+            {t('quiz.yourAnswerLabel')}
           </label>
           {/* A textarea, not a single-line input: the stored correct answers
               average 16.9 words, so an answer worth writing does not fit on
@@ -418,18 +426,20 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
             value={value}
             disabled={locked}
             rows={3}
-            placeholder="Type your answer"
+            placeholder={t('quiz.answerPlaceholder')}
             onChange={(event) => onChange(event.target.value)}
             className="print-answer-box w-full rounded-sm border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-faint focus:border-accent focus:outline-none disabled:opacity-70"
           />
           <p className="type-micro mt-1.5 text-faint">
-            {question.isKnownType
-              ? 'Answer in your own words. It is judged on meaning, not on matching the document’s wording.'
-              : 'This question type was not recognised, so it accepts a free-text answer.'}
+            {question.isKnownType ? t('quiz.freeTextHint') : t('quiz.unknownTypeHint')}
           </p>
         </div>
       ) : (
-        <div className="measure space-y-2" role="radiogroup" aria-label={question.text || 'Options'}>
+        <div
+          className="measure space-y-2"
+          role="radiogroup"
+          aria-label={question.text || t('quiz.optionsLabel')}
+        >
           {question.options.map((option) => {
             const selected = value === option.key
 
@@ -491,7 +501,7 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
                   {option.text}
                   {isCorrectOption ? (
                     <span className="type-micro ml-2 font-semibold text-accent">
-                      Correct answer
+                      {t('quiz.correctAnswerMarker')}
                     </span>
                   ) : null}
                 </span>
@@ -502,7 +512,9 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
       )}
 
       {question.sourcePage != null ? (
-        <p className="type-micro mt-3 text-faint">From page {question.sourcePage}</p>
+        <p className="type-micro mt-3 text-faint">
+          {t('quiz.fromPage', { page: question.sourcePage })}
+        </p>
       ) : null}
 
       {feedback ? (
@@ -517,6 +529,8 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
  * reason, correct_answer, explanation }.
  */
 function Feedback({ feedback, isFreeText }) {
+  const { t } = useI18n()
+
   const verdict = feedback.verdict || (feedback.correct ? 'correct' : 'incorrect')
 
   const tone =
@@ -526,12 +540,16 @@ function Feedback({ feedback, isFreeText }) {
         ? 'bg-sunken text-ink'
         : 'bg-danger-soft text-danger'
 
+  /* The verdict is a fixed value we render, so it is ours to translate. The
+     reason underneath it is the sentence Claude wrote about this answer, and
+     the model answer and the explanation come from the quiz - all three are
+     content, and all three are shown exactly as they arrived. */
   const label =
     verdict === 'correct'
-      ? 'Correct'
+      ? t('quiz.verdictCorrect')
       : verdict === 'partial'
-        ? 'Partially correct'
-        : 'Incorrect'
+        ? t('quiz.verdictPartial')
+        : t('quiz.verdictIncorrect')
 
   return (
     <div className={cx('print-verdict mt-4 flex items-start gap-2.5 rounded-sm px-3.5 py-2.5', tone)}>
@@ -544,7 +562,9 @@ function Feedback({ feedback, isFreeText }) {
         <p className="font-semibold">{label}</p>
         {feedback.reason ? <p className="mt-0.5 opacity-90">{feedback.reason}</p> : null}
         {feedback.student_answer != null ? (
-          <p className="mt-0.5 opacity-75">You answered: {String(feedback.student_answer)}</p>
+          <p className="mt-0.5 opacity-75">
+            {t('quiz.youAnswered', { answer: String(feedback.student_answer) })}
+          </p>
         ) : null}
 
         {/* For a choice question the right option is already marked in the
@@ -552,7 +572,7 @@ function Feedback({ feedback, isFreeText }) {
             answer has nowhere else to show it. */}
         {isFreeText && feedback.correct_answer ? (
           <p className="mt-1.5">
-            <span className="font-semibold">Model answer: </span>
+            <span className="font-semibold">{t('quiz.modelAnswer')}</span>
             <span className="opacity-90">{String(feedback.correct_answer)}</span>
           </p>
         ) : null}
@@ -583,6 +603,8 @@ function findFeedback(result, questionId) {
  * student already saw.
  */
 function AttemptsTable({ quizId, attempts }) {
+  const { t } = useI18n()
+
   const [openId, setOpenId] = useState(null)
   const [detail, setDetail] = useState(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
@@ -603,7 +625,7 @@ function AttemptsTable({ quizId, attempts }) {
     try {
       setDetail(await getQuizAttempt(quizId, attemptId))
     } catch (err) {
-      setDetailError(getErrorMessage(err, 'Could not load this attempt.'))
+      setDetailError(getErrorMessage(err, t('attempts.couldNotLoad')))
     } finally {
       setLoadingDetail(false)
     }
@@ -615,7 +637,7 @@ function AttemptsTable({ quizId, attempts }) {
      printed underneath it would put old answers on the same paper. */
   return (
     <section className="no-print mb-7">
-      <h2 className="type-eyebrow mb-3">Previous attempts</h2>
+      <h2 className="type-eyebrow mb-3">{t('attempts.title')}</h2>
 
       {/* A table is the one thing allowed to be wider than the page, so it
           gets its own horizontal scroll instead of pushing the layout. */}
@@ -624,22 +646,22 @@ function AttemptsTable({ quizId, attempts }) {
           <thead>
             <tr className="border-b border-line text-left">
               <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
-                Attempt
+                {t('attempts.colAttempt')}
               </th>
               <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
-                Score
+                {t('attempts.colScore')}
               </th>
               <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
-                Percentage
+                {t('attempts.colPercentage')}
               </th>
               <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
-                Time
+                {t('attempts.colTime')}
               </th>
               <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
-                Taken
+                {t('attempts.colTaken')}
               </th>
               <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
-                <span className="sr-only">Answers</span>
+                <span className="sr-only">{t('attempts.colAnswers')}</span>
               </th>
             </tr>
           </thead>
@@ -671,7 +693,7 @@ function AttemptsTable({ quizId, attempts }) {
                     onClick={() => toggleAttempt(attempt.id)}
                     className="type-micro rounded-sm px-2 py-1 font-medium text-muted underline underline-offset-4 transition-colors hover:text-ink"
                   >
-                    {openId === attempt.id ? 'Hide answers' : 'View answers'}
+                    {openId === attempt.id ? t('attempts.hideAnswers') : t('attempts.viewAnswers')}
                   </button>
                 </td>
               </tr>
@@ -683,7 +705,7 @@ function AttemptsTable({ quizId, attempts }) {
       {openId ? (
         <div className="mt-3">
           {loadingDetail ? (
-            <LoadingState label="Loading your answers" rows={2} />
+            <LoadingState label={t('attempts.loadingAnswers')} rows={2} />
           ) : detailError ? (
             <InlineError message={detailError} />
           ) : detail ? (
@@ -692,18 +714,17 @@ function AttemptsTable({ quizId, attempts }) {
         </div>
       ) : null}
 
-      <p className="type-micro mt-1.5 text-faint">
-        Newest first. Choice questions are re-checked here; written answers show
-        yours next to the model answer without a mark.
-      </p>
+      <p className="type-micro mt-1.5 text-faint">{t('attempts.note')}</p>
     </section>
   )
 }
 
 /** One opened attempt: every question, with what was written and what was right. */
 function AttemptDetail({ detail }) {
+  const { t } = useI18n()
+
   if (!detail.questions || detail.questions.length === 0) {
-    return <p className="type-small text-muted">This attempt recorded no answers.</p>
+    return <p className="type-small text-muted">{t('attempts.noAnswers')}</p>
   }
 
   return (
@@ -731,11 +752,11 @@ function AttemptDetail({ detail }) {
 
             <div className="type-small mt-2 space-y-1">
               <p className={cx(yours ? 'text-ink' : 'text-faint')}>
-                <span className="font-semibold text-muted">You wrote: </span>
-                {yours || 'nothing'}
+                <span className="font-semibold text-muted">{t('attempts.youWrote')}</span>
+                {yours || t('attempts.nothing')}
               </p>
               <p className="text-ink">
-                <span className="font-semibold text-muted">Correct: </span>
+                <span className="font-semibold text-muted">{t('attempts.correctLabel')}</span>
                 {right || '--'}
               </p>
               {question.explanation ? (
@@ -744,9 +765,7 @@ function AttemptDetail({ detail }) {
             </div>
 
             {question.verdict == null ? (
-              <p className="type-micro mt-2 text-faint">
-                Written answer &mdash; the mark it was given at the time is not kept.
-              </p>
+              <p className="type-micro mt-2 text-faint">{t('attempts.notKept')}</p>
             ) : null}
           </li>
         )
@@ -807,6 +826,8 @@ function formatDateTime(value) {
 }
 
 function ScoreCard({ result, questionCount }) {
+  const { t } = useI18n()
+
   const total = result.totalQuestions ?? questionCount
   const percentage =
     result.percentage ?? (total ? Math.round(((result.score ?? 0) / total) * 100) : null)
@@ -844,21 +865,30 @@ function ScoreCard({ result, questionCount }) {
         </div>
 
         <div className="min-w-0">
-          <p className="type-eyebrow">Result</p>
+          <p className="type-eyebrow">{t('quiz.resultEyebrow')}</p>
           <p className="type-display mt-1">
-            {result.score != null && total != null ? `${result.score} of ${total}` : 'Submitted'}
+            {result.score != null && total != null
+              ? t('quiz.scoreOf', { score: result.score, total })
+              : t('quiz.submitted')}
           </p>
           {/* Partial answers earn the mark, so they are named here as well as
               on the question: otherwise a student reading only the score sees
               full credit for an answer that was half of one. */}
+          {/* Assembled from whichever counts the server sent, piece by piece
+              and in the same order as before. The commas belong to the pieces
+              rather than to the code, so a translator can change them. */}
           <p className="type-small mt-1.5 text-muted">
             {result.correctCount != null
-              ? `${result.correctCount} correct${
-                  result.partialCount ? `, ${result.partialCount} partially correct` : ''
+              ? `${t('quiz.scoreCorrect', { count: result.correctCount })}${
+                  result.partialCount
+                    ? t('quiz.scorePartial', { count: result.partialCount })
+                    : ''
                 }${
-                  result.wrongCount != null ? `, ${result.wrongCount} incorrect` : ''
-                }. Per-question results are marked below.`
-              : 'Scored by the server. Per-question results are marked below.'}
+                  result.wrongCount != null
+                    ? t('quiz.scoreWrong', { count: result.wrongCount })
+                    : ''
+                }${t('quiz.scoreSuffix')}`
+              : t('quiz.scoreFallback')}
           </p>
         </div>
       </div>

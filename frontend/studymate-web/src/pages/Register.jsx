@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useI18n } from '../context/I18nContext'
 import { getErrorMessage } from '../lib/errors'
 import { PASSWORD_HINT, getPasswordError } from '../lib/password'
 import { Button, Field, Input, InlineError } from '../components/ui'
@@ -8,6 +9,7 @@ import AuthLayout from './AuthLayout'
 
 export default function Register() {
   const { register, login, isAuthenticated } = useAuth()
+  const { t } = useI18n()
   const navigate = useNavigate()
 
   const [fullName, setFullName] = useState('')
@@ -38,7 +40,7 @@ export default function Register() {
       await login({ email, password })
       navigate('/documents', { replace: true })
     } catch (err) {
-      setError(getErrorMessage(err, 'Could not create the account.'))
+      setError(getErrorMessage(err, t('auth.couldNotCreateAccount')))
     } finally {
       setSubmitting(false)
     }
@@ -46,47 +48,50 @@ export default function Register() {
 
   return (
     <AuthLayout
-      title="Create your account"
-      subtitle="Register, then upload your first PDF."
+      title={t('auth.createAccountTitle')}
+      subtitle={t('auth.createAccountSubtitle')}
       footer={
         <p className="type-small text-muted">
-          Already registered?{' '}
+          {t('auth.alreadyRegistered')}{' '}
           <Link
             to="/login"
             className="font-medium text-accent underline underline-offset-4 hover:text-accent-hover"
           >
-            Sign in
+            {t('auth.signInLink')}
           </Link>
         </p>
       }
     >
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-        <Field label="Full name" required>
+        <Field label={t('auth.fullName')} required>
           {(field) => (
             <Input
               {...field}
               autoComplete="name"
-              placeholder="Hanan Mohammad"
+              placeholder={t('auth.fullNamePlaceholder')}
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
             />
           )}
         </Field>
 
-        <Field label="Email" required>
+        <Field label={t('auth.email')} required>
           {(field) => (
             <Input
               {...field}
               type="email"
               autoComplete="email"
-              placeholder="you@university.edu"
+              placeholder={t('auth.emailPlaceholder')}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
           )}
         </Field>
 
-        <Field label="Password" required hint={PASSWORD_HINT}>
+        {/* The hint is PASSWORD_HINT from lib/password.js, which is built from
+            MIN_PASSWORD_LENGTH outside any component and so cannot reach t()
+            here. Left as it was, and listed in the batch report. */}
+        <Field label={t('auth.password')} required hint={PASSWORD_HINT}>
           {(field) => (
             <Input
               {...field}
@@ -101,7 +106,7 @@ export default function Register() {
         <InlineError message={error} />
 
         <Button type="submit" size="lg" className="w-full" loading={submitting}>
-          Create account
+          {t('auth.createAccount')}
         </Button>
       </form>
     </AuthLayout>

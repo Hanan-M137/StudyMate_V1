@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useI18n } from '../context/I18nContext'
 import { changePassword, updateProfile } from '../api/auth'
 import { setTokens } from '../api/tokens'
 import { getErrorMessage } from '../lib/errors'
@@ -23,24 +24,29 @@ import {
    because it makes a promise the app cannot keep.
    ========================================================================== */
 
-const THEME_LABELS = {
-  system: 'System',
-  light: 'Light',
-  dark: 'Dark',
+/* Keys rather than words: THEMES is a list of values from lib/theme.js and
+   these two maps are read out here, outside any component, so the lookup has
+   to happen where the radio row renders. */
+const THEME_LABEL_KEYS = {
+  system: 'settings.themeSystem',
+  light: 'settings.themeLight',
+  dark: 'settings.themeDark',
 }
 
-const THEME_HINTS = {
-  system: 'Follow the setting on this device.',
-  light: 'Always the light palette.',
-  dark: 'Always the dark palette.',
+const THEME_HINT_KEYS = {
+  system: 'settings.themeSystemHint',
+  light: 'settings.themeLightHint',
+  dark: 'settings.themeDarkHint',
 }
 
 export default function Settings() {
+  const { t } = useI18n()
+
   return (
     <div className="no-print space-y-6">
       <header>
-        <h1 className="type-display">Settings</h1>
-        <p className="type-small mt-1 text-muted">Appearance and account.</p>
+        <h1 className="type-display">{t('settings.title')}</h1>
+        <p className="type-small mt-1 text-muted">{t('settings.subtitle')}</p>
       </header>
 
       <AppearanceSection />
@@ -54,6 +60,8 @@ export default function Settings() {
    ========================================================================== */
 
 function AppearanceSection() {
+  const { t } = useI18n()
+
   /* Read once, from storage rather than from the document: the inline script
      in index.html has already resolved 'system' into a light or dark
      attribute, so reading the document back would turn a preference of
@@ -73,7 +81,7 @@ function AppearanceSection() {
   return (
     <Card>
       <CardHeader>
-        <h2 className="type-title">Appearance</h2>
+        <h2 className="type-title">{t('settings.appearance')}</h2>
       </CardHeader>
 
       <CardBody>
@@ -81,7 +89,9 @@ function AppearanceSection() {
             once, and the choice takes effect on the spot - there is nothing
             to save, so there is no save button. */}
         <fieldset>
-          <legend className="mb-2.5 block text-sm font-medium text-ink-soft">Theme</legend>
+          <legend className="mb-2.5 block text-sm font-medium text-ink-soft">
+            {t('settings.theme')}
+          </legend>
 
           <div className="space-y-2">
             {THEMES.map((value) => (
@@ -98,8 +108,12 @@ function AppearanceSection() {
                   className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--color-accent)]"
                 />
                 <span className="min-w-0">
-                  <span className="block text-sm font-medium text-ink">{THEME_LABELS[value]}</span>
-                  <span className="type-small block text-muted">{THEME_HINTS[value]}</span>
+                  <span className="block text-sm font-medium text-ink">
+                    {t(THEME_LABEL_KEYS[value])}
+                  </span>
+                  <span className="type-small block text-muted">
+                    {t(THEME_HINT_KEYS[value])}
+                  </span>
                 </span>
               </label>
             ))}
@@ -115,10 +129,12 @@ function AppearanceSection() {
    ========================================================================== */
 
 function AccountSection() {
+  const { t } = useI18n()
+
   return (
     <Card>
       <CardHeader>
-        <h2 className="type-title">Account</h2>
+        <h2 className="type-title">{t('settings.account')}</h2>
       </CardHeader>
 
       <CardBody className="space-y-7">
@@ -133,6 +149,7 @@ function AccountSection() {
 
 function NameForm() {
   const { fullName, email, applyProfile } = useAuth()
+  const { t } = useI18n()
 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
@@ -167,7 +184,7 @@ function NameForm() {
       setDraft(null)
       setSaved(true)
     } catch (err) {
-      setError(getErrorMessage(err, 'Could not save your name.'))
+      setError(getErrorMessage(err, t('settings.couldNotSaveName')))
     } finally {
       setSaving(false)
     }
@@ -176,8 +193,8 @@ function NameForm() {
   return (
     <form onSubmit={handleSubmit} className="space-y-3" noValidate>
       <Field
-        label="Name"
-        hint={email ? `Signed in as ${email}.` : undefined}
+        label={t('settings.name')}
+        hint={email ? t('settings.signedInAs', { email }) : undefined}
       >
         {(field) => (
           <Input
@@ -193,10 +210,10 @@ function NameForm() {
       </Field>
 
       <InlineError message={error} />
-      <SuccessNote message={saved ? 'Name saved.' : null} />
+      <SuccessNote message={saved ? t('settings.nameSaved') : null} />
 
       <Button type="submit" loading={saving} disabled={!name.trim()}>
-        Save name
+        {t('settings.saveName')}
       </Button>
     </form>
   )
@@ -205,6 +222,8 @@ function NameForm() {
 /* ---- Password ----------------------------------------------------------- */
 
 function PasswordForm() {
+  const { t } = useI18n()
+
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -234,7 +253,7 @@ function PasswordForm() {
        the confirmation from a wrong new password, so it would answer a
        question nobody meant to ask. */
     if (newPassword !== confirmPassword) {
-      setError('The two new passwords do not match.')
+      setError(t('settings.passwordsDoNotMatch'))
       return
     }
 
@@ -254,7 +273,7 @@ function PasswordForm() {
       setConfirmPassword('')
       setSaved(true)
     } catch (err) {
-      setError(getErrorMessage(err, 'Could not change your password.'))
+      setError(getErrorMessage(err, t('settings.couldNotChangePassword')))
     } finally {
       setSaving(false)
     }
@@ -262,9 +281,9 @@ function PasswordForm() {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3 border-t border-line pt-6" noValidate>
-      <p className="text-sm font-medium text-ink">Change password</p>
+      <p className="text-sm font-medium text-ink">{t('settings.changePasswordHeading')}</p>
 
-      <Field label="Current password" required>
+      <Field label={t('settings.currentPassword')} required>
         {(field) => (
           <Input
             {...field}
@@ -279,7 +298,10 @@ function PasswordForm() {
         )}
       </Field>
 
-      <Field label="New password" required hint={PASSWORD_HINT}>
+      {/* PASSWORD_HINT comes from lib/password.js, where it is built from
+          MIN_PASSWORD_LENGTH outside any component and cannot reach t(). Left
+          as it was, and listed in the batch report. */}
+      <Field label={t('settings.newPassword')} required hint={PASSWORD_HINT}>
         {(field) => (
           <Input
             {...field}
@@ -294,7 +316,7 @@ function PasswordForm() {
         )}
       </Field>
 
-      <Field label="Confirm new password" required>
+      <Field label={t('settings.confirmNewPassword')} required>
         {(field) => (
           <Input
             {...field}
@@ -312,9 +334,7 @@ function PasswordForm() {
       <InlineError message={error} />
       <SuccessNote
         message={
-          saved
-            ? 'Password changed. Any other device signed in to this account has been signed out.'
-            : null
+          saved ? t('settings.passwordChanged') : null
         }
       />
 
@@ -323,7 +343,7 @@ function PasswordForm() {
         loading={saving}
         disabled={!currentPassword || !newPassword || !confirmPassword}
       >
-        Change password
+        {t('settings.changePassword')}
       </Button>
     </form>
   )

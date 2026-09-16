@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useI18n } from '../context/I18nContext'
 import { ArrowUpIcon } from './icons'
 
 /* ==========================================================================
@@ -26,6 +27,7 @@ function threshold() {
 }
 
 export default function BackToTop() {
+  const { t } = useI18n()
   const [visible, setVisible] = useState(false)
 
   useEffect(() => {
@@ -70,7 +72,7 @@ export default function BackToTop() {
     <button
       type="button"
       onClick={scrollToTop}
-      aria-label="Back to top"
+      aria-label={t('common.backToTop')}
       className="no-print animate-enter fixed bottom-5 left-5 z-30 flex h-10 w-10 items-center justify-center rounded-full border border-line-strong bg-surface text-ink-soft shadow-raised transition-colors duration-150 hover:bg-sunken hover:text-ink"
     >
       <ArrowUpIcon className="h-[18px] w-[18px]" />

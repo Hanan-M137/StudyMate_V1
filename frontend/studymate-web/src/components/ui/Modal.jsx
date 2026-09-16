@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { useI18n } from '../../context/I18nContext'
 import Button from './Button'
 import { cx } from './cx'
 
@@ -109,13 +110,18 @@ export function ConfirmDialog({
   open,
   title,
   description,
-  confirmLabel = 'Delete',
-  cancelLabel = 'Cancel',
+  confirmLabel,
+  cancelLabel,
   busy = false,
   destructive = true,
   onConfirm,
   onCancel,
 }) {
+  /* The two labels were default parameters, which cannot call a hook. They
+     are resolved here instead, and a caller that names its own - "Delete
+     document" rather than "Delete" - still overrides them. */
+  const { t } = useI18n()
+
   return (
     <Modal
       open={open}
@@ -125,7 +131,7 @@ export function ConfirmDialog({
       footer={
         <>
           <Button variant="secondary" onClick={onCancel} disabled={busy}>
-            {cancelLabel}
+            {cancelLabel ?? t('common.cancel')}
           </Button>
           <Button
             variant={destructive ? 'danger' : 'primary'}
@@ -133,7 +139,7 @@ export function ConfirmDialog({
             loading={busy}
             data-autofocus
           >
-            {confirmLabel}
+            {confirmLabel ?? t('common.delete')}
           </Button>
         </>
       }

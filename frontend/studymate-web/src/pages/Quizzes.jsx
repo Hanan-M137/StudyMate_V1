@@ -8,6 +8,7 @@ import {
   renameQuiz,
   setQuizPinned,
 } from '../api/quizzes'
+import { useI18n } from '../context/I18nContext'
 import { getErrorMessage } from '../lib/errors'
 import { sortPinnedFirst } from '../lib/pinned'
 import PageHeader from '../components/PageHeader'
@@ -33,9 +34,9 @@ import {
    the same as sending none, which is how the endpoint behaved before the
    choice existed. */
 const QUESTION_TYPE_CHOICES = [
-  { value: 'multiple_choice', label: 'Multiple choice' },
-  { value: 'true_false', label: 'True / false' },
-  { value: 'short_answer', label: 'Short answer' },
+  { value: 'multiple_choice', labelKey: 'quiz.typeMultipleChoice' },
+  { value: 'true_false', labelKey: 'quiz.typeTrueFalse' },
+  { value: 'short_answer', labelKey: 'quiz.typeShortAnswer' },
 ]
 
 const ALL_TYPES = QUESTION_TYPE_CHOICES.map((choice) => choice.value)
@@ -47,6 +48,7 @@ const ALL_TYPES = QUESTION_TYPE_CHOICES.map((choice) => choice.value)
 const DOCUMENT_PARAM = 'document'
 
 export default function Quizzes() {
+  const { t } = useI18n()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedDocumentId = searchParams.get(DOCUMENT_PARAM) || ''
@@ -80,11 +82,11 @@ export default function Quizzes() {
       setDocuments(docs)
       setQuizzes(savedQuizzes)
     } catch (err) {
-      setLoadError(getErrorMessage(err, 'Could not load your quizzes.'))
+      setLoadError(getErrorMessage(err, t('quiz.couldNotLoad')))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     load()
@@ -156,37 +158,39 @@ export default function Quizzes() {
      the question count, instead of after a generation that would have been
      thrown away. The backend still makes every one of these checks itself. */
   function validate() {
-    if (!documentId) return 'Pick a document first.'
-    if (!title.trim()) return 'Give the quiz a title.'
+    if (!documentId) return t('quiz.pickDocument')
+    if (!title.trim()) return t('quiz.giveTitle')
 
     const count = Number(numQuestions)
     if (!Number.isInteger(count) || count < 1 || count > 50) {
-      return 'Ask for between 1 and 50 questions.'
+      return t('quiz.countRange')
     }
 
-    if (questionTypes.length === 0) return 'Pick at least one question type.'
+    if (questionTypes.length === 0) return t('quiz.pickType')
 
     if (count < questionTypes.length) {
-      return (
-        `${count} question${count === 1 ? '' : 's'} is not enough for ` +
-        `${questionTypes.length} question types: each type needs at least one question.`
-      )
+      /* One whole sentence per plural form rather than an "s" glued on: the
+         singular and the plural differ in more than a letter in most
+         languages, and in Arabic there are more than two of them. */
+      return count === 1
+        ? t('quiz.notEnoughQuestionsOne', { count, types: questionTypes.length })
+        : t('quiz.notEnoughQuestionsOther', { count, types: questionTypes.length })
     }
 
     const hasStart = startPage !== ''
     const hasEnd = endPage !== ''
 
     if (hasStart !== hasEnd) {
-      return 'Give both a first and a last page, or leave both empty.'
+      return t('quiz.pageRangeBoth')
     }
 
     if (hasStart) {
       const first = Number(startPage)
       const last = Number(endPage)
 
-      if (!Number.isInteger(first) || first < 1) return 'The first page must be 1 or greater.'
-      if (!Number.isInteger(last)) return 'The last page must be a whole number.'
-      if (last < first) return 'The last page cannot come before the first page.'
+      if (!Number.isInteger(first) || first < 1) return t('quiz.firstPageMin')
+      if (!Number.isInteger(last)) return t('quiz.lastPageWhole')
+      if (last < first) return t('quiz.lastPageBeforeFirst')
     }
 
     return null
@@ -216,9 +220,7 @@ export default function Quizzes() {
       })
 
       if (!quiz.id) {
-        setCreateError(
-          'The quiz was created but the response contained no quiz_id, so it cannot be opened.',
-        )
+        setCreateError(t('quiz.noQuizId'))
         return
       }
 
@@ -236,7 +238,7 @@ export default function Quizzes() {
       setTitle('')
       await load()
     } catch (err) {
-      setCreateError(getErrorMessage(err, 'Could not create the quiz.'))
+      setCreateError(getErrorMessage(err, t('quiz.couldNotCreate')))
     } finally {
       setCreating(false)
     }
@@ -277,27 +279,27 @@ export default function Quizzes() {
   return (
     <>
       <PageHeader
-        eyebrow="Revision"
-        title="Quizzes"
-        description="Generate a quiz from a document you have already uploaded, then take it."
+        eyebrow={t('quiz.eyebrow')}
+        title={t('quiz.title')}
+        description={t('quiz.description')}
       />
 
       <div className="space-y-8">
         {loading ? (
-          <LoadingState label="Loading your quizzes" rows={2} />
+          <LoadingState label={t('quiz.loading')} rows={2} />
         ) : loadError ? (
           <ErrorState message={loadError} onRetry={load} />
         ) : readyDocuments.length === 0 ? (
           <EmptyState
             icon={<QuizIcon className="h-5 w-5" />}
-            title="No processed documents"
-            description="A quiz is generated from a document, so upload a PDF and wait for it to finish indexing first."
+            title={t('quiz.noDocumentsTitle')}
+            description={t('quiz.noDocumentsDescription')}
             action={
               <Link
                 to="/documents"
                 className="inline-flex h-10 items-center rounded-sm bg-accent px-4 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover"
               >
-                Go to documents
+                {t('quiz.goToDocuments')}
               </Link>
             }
           />
@@ -305,7 +307,7 @@ export default function Quizzes() {
           <>
             <Card as="form" onSubmit={handleCreate}>
               <CardBody className="space-y-4">
-                <Field label="Document" required>
+                <Field label={t('quiz.documentLabel')} required>
                   {(field) => (
                     <Select
                       {...field}
@@ -321,20 +323,20 @@ export default function Quizzes() {
                   )}
                 </Field>
 
-                <Field label="Quiz title" required>
+                <Field label={t('quiz.titleLabel')} required>
                   {(field) => (
                     <Input
                       {...field}
                       value={title}
-                      placeholder="Chapter 3 review"
+                      placeholder={t('quiz.titlePlaceholder')}
                       onChange={(event) => setTitle(event.target.value)}
                     />
                   )}
                 </Field>
 
                 <Field
-                  label="Number of questions"
-                  hint="Between 1 and 50, and at least one for each type you pick."
+                  label={t('quiz.countLabel')}
+                  hint={t('quiz.countHint')}
                   className="max-w-45"
                 >
                   {(field) => (
@@ -354,7 +356,7 @@ export default function Quizzes() {
                     and a dropdown cannot express one. */}
                 <fieldset>
                   <legend className="type-small mb-1.5 font-medium text-ink">
-                    Question types
+                    {t('quiz.typesLegend')}
                   </legend>
                   <div className="flex flex-wrap gap-2">
                     {QUESTION_TYPE_CHOICES.map((choice) => {
@@ -386,15 +388,12 @@ export default function Quizzes() {
                               <span className="h-1.5 w-1.5 rounded-xs bg-on-accent" />
                             ) : null}
                           </span>
-                          {choice.label}
+                          {t(choice.labelKey)}
                         </label>
                       )
                     })}
                   </div>
-                  <p className="type-micro mt-1.5 text-faint">
-                    Pick at least one. All three is the same as leaving it alone. The
-                    questions are split evenly between the types you pick.
-                  </p>
+                  <p className="type-micro mt-1.5 text-faint">{t('quiz.typesHint')}</p>
                 </fieldset>
 
                 {/* Both boxes or neither: half a range is a half-finished
@@ -402,39 +401,43 @@ export default function Quizzes() {
                     which half was meant. */}
                 <fieldset>
                   <legend className="type-small mb-1.5 font-medium text-ink">
-                    Pages <span className="font-normal text-faint">(optional)</span>
+                    {t('quiz.pagesLegend')}{' '}
+                    <span className="font-normal text-faint">{t('common.optional')}</span>
                   </legend>
                   <div className="flex flex-wrap items-end gap-3">
-                    <Field label="From" className="max-w-32">
+                    <Field label={t('quiz.pageFrom')} className="max-w-32">
                       {(field) => (
                         <Input
                           {...field}
                           type="number"
                           min="1"
                           value={startPage}
-                          placeholder="1"
+                          placeholder={t('quiz.pageFromPlaceholder')}
                           onChange={(event) => setStartPage(event.target.value)}
                         />
                       )}
                     </Field>
-                    <Field label="To" className="max-w-32">
+                    <Field label={t('quiz.pageTo')} className="max-w-32">
                       {(field) => (
                         <Input
                           {...field}
                           type="number"
                           min="1"
                           value={endPage}
-                          placeholder="20"
+                          placeholder={t('quiz.pageToPlaceholder')}
                           onChange={(event) => setEndPage(event.target.value)}
                         />
                       )}
                     </Field>
                   </div>
+                  {/* Three sentences, joined exactly as they were: the middle
+                      one appears only when the server told us a page count. */}
                   <p className="type-micro mt-1.5 text-faint">
-                    Counted from the first page of the PDF file, which is often not the
-                    number printed on the page.
-                    {formDocumentPageCount ? ` This document has ${formDocumentPageCount} pages.` : ''}{' '}
-                    Leave both empty to use the whole document.
+                    {t('quiz.pagesHint')}
+                    {formDocumentPageCount
+                      ? ` ${t('quiz.pagesHintCount', { count: formDocumentPageCount })}`
+                      : ''}{' '}
+                    {t('quiz.pagesHintWhole')}
                   </p>
                 </fieldset>
 
@@ -445,8 +448,8 @@ export default function Quizzes() {
                     htmlFor="quiz-description"
                     className="type-small mb-1.5 block font-medium text-ink"
                   >
-                    What should it focus on?{' '}
-                    <span className="font-normal text-faint">(optional)</span>
+                    {t('quiz.focusLabel')}{' '}
+                    <span className="font-normal text-faint">{t('common.optional')}</span>
                   </label>
                   {/* Typing and speaking fill the same field, so the
                       microphone sits beside the box rather than under a
@@ -458,15 +461,13 @@ export default function Quizzes() {
                       id="quiz-description"
                       rows={3}
                       value={description}
-                      placeholder="For example: the rules of building the imperative verb, not the vocabulary"
+                      placeholder={t('quiz.focusPlaceholder')}
                       onChange={(event) => setDescription(event.target.value)}
                       className="min-w-64 flex-1 rounded-sm border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-faint focus:border-accent focus:outline-none"
                     />
                     <VoiceInput value={description} onChange={setDescription} />
                   </div>
-                  <p className="type-micro mt-1.5 text-faint">
-                    Used while generating, then discarded. It is not saved with the quiz.
-                  </p>
+                  <p className="type-micro mt-1.5 text-faint">{t('quiz.focusHint')}</p>
                 </div>
 
                 <InlineError message={createError} />
@@ -477,12 +478,9 @@ export default function Quizzes() {
               </CardBody>
 
               <CardFooter className="flex flex-wrap items-center justify-between gap-3">
-                <p className="type-small max-w-md text-muted">
-                  Questions are written from this document only. Anything the generator
-                  produces outside the types you picked is discarded before the quiz is saved.
-                </p>
+                <p className="type-small max-w-md text-muted">{t('quiz.footerNote')}</p>
                 <Button type="submit" loading={creating}>
-                  {creating ? 'Generating...' : 'Create quiz'}
+                  {creating ? t('quiz.generating') : t('quiz.create')}
                 </Button>
               </CardFooter>
             </Card>
@@ -490,31 +488,33 @@ export default function Quizzes() {
             {unknownDocument ? (
               <EmptyState
                 icon={<DocumentIcon className="h-5 w-5" />}
-                title="That document is not here"
-                description="It may have been deleted, or it may still be processing. The list of documents below has the ones that can be quizzed."
+                title={t('quiz.unknownDocumentTitle')}
+                description={t('quiz.unknownDocumentDescription')}
                 action={
                   <Button variant="secondary" onClick={clearDocument}>
-                    All documents
+                    {t('quiz.allDocumentsButton')}
                   </Button>
                 }
               />
             ) : selectedDocument ? (
               <section>
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="type-eyebrow">Quizzes from {selectedDocument.title}</h2>
+                  {/* The document's own title is the student's, so it is
+                      dropped into the sentence rather than translated with it. */}
+                  <h2 className="type-eyebrow">
+                    {t('quiz.fromDocument', { title: selectedDocument.title })}
+                  </h2>
                   <button
                     type="button"
                     onClick={clearDocument}
                     className="type-small rounded-sm px-2 py-1 text-muted transition-colors hover:bg-sunken hover:text-ink"
                   >
-                    ← All documents
+                    {t('quiz.allDocumentsBack')}
                   </button>
                 </div>
 
                 {visibleQuizzes.length === 0 ? (
-                  <p className="type-small measure text-muted">
-                    No quizzes from this document yet. Create one above and it will appear here.
-                  </p>
+                  <p className="type-small measure text-muted">{t('quiz.noneFromDocument')}</p>
                 ) : (
                   <QuizList
                     quizzes={visibleQuizzes}
@@ -527,7 +527,7 @@ export default function Quizzes() {
               </section>
             ) : (
               <section>
-                <h2 className="type-eyebrow mb-3">Your documents</h2>
+                <h2 className="type-eyebrow mb-3">{t('quiz.yourDocuments')}</h2>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {readyDocuments.map((doc) => (
                     <DocumentCard
@@ -557,13 +557,18 @@ export default function Quizzes() {
  * way in rather than blocking it.
  */
 function QuizWarnings({ quiz }) {
+  const { t } = useI18n()
+
   return (
     <div
       role="status"
       className="rounded-sm border border-line-strong bg-sunken/60 px-3.5 py-3"
     >
+      {/* The quiz's title and every warning under it come from the server -
+          the student's content and the generator's own words, neither ours to
+          translate. Only the sentence around the title is. */}
       <p className="text-sm font-medium text-ink">
-        “{quiz.title}” was created, with something to mention:
+        {t('quiz.createdWithWarnings', { title: quiz.title })}
       </p>
       <ul className="type-small mt-2 list-disc space-y-1 pl-5 text-muted">
         {quiz.warnings.map((warning, index) => (
@@ -574,7 +579,7 @@ function QuizWarnings({ quiz }) {
         to={`/quizzes/${quiz.id}`}
         className="type-small mt-3 inline-flex font-medium text-accent hover:underline"
       >
-        Open the quiz →
+        {t('quiz.openQuiz')}
       </Link>
     </div>
   )
@@ -587,6 +592,8 @@ function QuizWarnings({ quiz }) {
  * quiz can be started from, and a grid that hid it would hide the way in.
  */
 function DocumentCard({ document, quizCount, onOpen }) {
+  const { t } = useI18n()
+
   return (
     <Card interactive>
       <button
@@ -604,8 +611,10 @@ function DocumentCard({ document, quizCount, onOpen }) {
           <span className="block truncate text-sm font-medium text-ink">{document.title}</span>
           <span className="type-micro block text-faint">
             {quizCount === 0
-              ? 'No quizzes yet'
-              : `${quizCount} ${quizCount === 1 ? 'quiz' : 'quizzes'}`}
+              ? t('quiz.noneYet')
+              : quizCount === 1
+                ? t('quiz.countOne', { count: quizCount })
+                : t('quiz.countOther', { count: quizCount })}
           </span>
         </span>
         <ChevronIcon className="h-4 w-4 shrink-0 text-faint" />
@@ -642,6 +651,8 @@ function QuizList({ quizzes, showDocument, onRenamed, onPinned, onDeleted }) {
  * short field, and the row is where the name is being read from.
  */
 function QuizRow({ quiz, showDocument, onRenamed, onPinned, onDeleted }) {
+  const { t } = useI18n()
+
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(quiz.title)
   const [saving, setSaving] = useState(false)
@@ -659,7 +670,7 @@ function QuizRow({ quiz, showDocument, onRenamed, onPinned, onDeleted }) {
     const next = draft.trim()
 
     if (!next) {
-      setError('A quiz needs a title.')
+      setError(t('quiz.needsTitle'))
       return
     }
 
@@ -678,7 +689,7 @@ function QuizRow({ quiz, showDocument, onRenamed, onPinned, onDeleted }) {
       onRenamed(quiz.id, updated.title)
       setRenaming(false)
     } catch (err) {
-      setError(getErrorMessage(err, 'Could not rename this quiz.'))
+      setError(getErrorMessage(err, t('quiz.couldNotRename')))
     } finally {
       setSaving(false)
     }
@@ -692,12 +703,12 @@ function QuizRow({ quiz, showDocument, onRenamed, onPinned, onDeleted }) {
             <Input
               autoFocus
               value={draft}
-              aria-label="Quiz title"
+              aria-label={t('quiz.renameLabel')}
               onChange={(event) => setDraft(event.target.value)}
               className="min-w-0 flex-1"
             />
             <Button type="submit" size="sm" loading={saving}>
-              Save
+              {t('common.save')}
             </Button>
             <Button
               type="button"
@@ -706,7 +717,7 @@ function QuizRow({ quiz, showDocument, onRenamed, onPinned, onDeleted }) {
               disabled={saving}
               onClick={() => setRenaming(false)}
             >
-              Cancel
+              {t('common.cancel')}
             </Button>
           </div>
           {/* In the row, not at the top of the page: the row is what failed. */}
@@ -752,7 +763,7 @@ function QuizRow({ quiz, showDocument, onRenamed, onPinned, onDeleted }) {
             onClick={startRenaming}
             className="type-micro rounded-sm px-2 py-1 text-muted transition-colors hover:bg-sunken hover:text-ink"
           >
-            Rename
+            {t('common.rename')}
           </button>
           {error ? <p className="type-micro mt-1 text-danger">{error}</p> : null}
         </div>
@@ -772,6 +783,8 @@ function QuizRow({ quiz, showDocument, onRenamed, onPinned, onDeleted }) {
  * attempts to lose.
  */
 function DeleteQuizButton({ quiz, onDeleted }) {
+  const { t } = useI18n()
+
   const [confirming, setConfirming] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState(null)
@@ -783,7 +796,7 @@ function DeleteQuizButton({ quiz, onDeleted }) {
       await deleteQuiz(quiz.id)
       onDeleted(quiz.id)
     } catch (err) {
-      setError(getErrorMessage(err, 'Could not delete this quiz.'))
+      setError(getErrorMessage(err, t('quiz.couldNotDelete')))
       setDeleting(false)
       setConfirming(false)
     }
@@ -797,7 +810,7 @@ function DeleteQuizButton({ quiz, onDeleted }) {
           onClick={() => setConfirming(true)}
           className="type-micro rounded-sm px-2 py-1 text-muted transition-colors hover:bg-sunken hover:text-danger"
         >
-          Delete
+          {t('common.delete')}
         </button>
         {error ? <p className="type-micro mt-1 text-danger">{error}</p> : null}
       </div>
@@ -808,10 +821,10 @@ function DeleteQuizButton({ quiz, onDeleted }) {
     <div className="flex shrink-0 items-center gap-2">
       <span className="type-micro text-muted">
         {quiz.attemptsCount
-          ? `Delete this quiz and its ${quiz.attemptsCount} ${
-              quiz.attemptsCount === 1 ? 'attempt' : 'attempts'
-            }?`
-          : 'Delete this quiz?'}
+          ? quiz.attemptsCount === 1
+            ? t('quiz.confirmDeleteWithAttemptsOne', { count: quiz.attemptsCount })
+            : t('quiz.confirmDeleteWithAttemptsOther', { count: quiz.attemptsCount })
+          : t('quiz.confirmDelete')}
       </span>
       <button
         type="button"
@@ -819,7 +832,7 @@ function DeleteQuizButton({ quiz, onDeleted }) {
         disabled={deleting}
         className="type-micro rounded-sm px-2 py-1 font-semibold text-danger transition-colors hover:bg-danger-soft disabled:opacity-60"
       >
-        {deleting ? 'Deleting...' : 'Yes, delete'}
+        {deleting ? t('common.deleting') : t('common.yesDelete')}
       </button>
       <button
         type="button"
@@ -827,7 +840,7 @@ function DeleteQuizButton({ quiz, onDeleted }) {
         disabled={deleting}
         className="type-micro rounded-sm px-2 py-1 text-muted transition-colors hover:bg-sunken hover:text-ink disabled:opacity-60"
       >
-        Cancel
+        {t('common.cancel')}
       </button>
     </div>
   )
