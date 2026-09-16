@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext'
 import { changePassword, updateProfile } from '../api/auth'
 import { setTokens } from '../api/tokens'
 import { getErrorMessage } from '../lib/errors'
+import { PASSWORD_HINT, getPasswordError } from '../lib/password'
 import { THEMES, getStoredTheme, setTheme, watchSystemTheme } from '../lib/theme'
 import {
   Button,
@@ -218,6 +219,17 @@ function PasswordForm() {
     setError(null)
     setSaved(false)
 
+    /* The rules first, and before the confirmation check: a password that
+       cannot be used at all is worth saying so about even if the second
+       field also disagrees, and it is the mistake the student can fix
+       without retyping both. Mirrors validate_password on the server,
+       which checks again regardless. */
+    const passwordError = getPasswordError(newPassword)
+    if (passwordError) {
+      setError(passwordError)
+      return
+    }
+
     /* Caught here rather than sent: the server has no way to tell a typo in
        the confirmation from a wrong new password, so it would answer a
        question nobody meant to ask. */
@@ -267,7 +279,7 @@ function PasswordForm() {
         )}
       </Field>
 
-      <Field label="New password" required hint="Use at least 8 characters.">
+      <Field label="New password" required hint={PASSWORD_HINT}>
         {(field) => (
           <Input
             {...field}

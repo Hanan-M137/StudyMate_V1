@@ -24,7 +24,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 
 from sqlalchemy.orm import Session
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -116,7 +116,7 @@ CHAT_HISTORY_LIMIT = 50
 
 
 # =========================================================
-# PYDANTIC SCHEMAS
+# PASSWORD RULES
 # =========================================================
 
 
@@ -131,9 +131,92 @@ CHAT_HISTORY_LIMIT = 50
 MIN_PASSWORD_LENGTH = 8
 
 
+def validate_password(password: str) -> None:
+    """
+    Refuse a password that does not meet the account rules:
+    at least MIN_PASSWORD_LENGTH characters, at least one
+    letter, and at least one digit.
+
+    Raises HTTPException(400) naming every rule the password
+    misses. Returns None when the password is acceptable.
+
+    Deliberately a plain function rather than a Field
+    constraint or a field_validator. Pydantic answers bad
+    input with a 422 and a nested error body, while the rest
+    of this API answers it with a 400 and one sentence the
+    student can read (see the duration_seconds range check on
+    the attempt endpoint). Splitting password errors across
+    both shapes would mean the browser needs two ways to show
+    the same kind of mistake.
+
+    Only registration and the password change call this.
+    Login never does: the rule is about the passwords we are
+    willing to store from now on, not about the accounts that
+    already exist, and applying it at login would lock out
+    every student who registered before it.
+    """
+
+    # -----------------------------------------------------
+    # Collect every failure, not just the first
+    # -----------------------------------------------------
+    #
+    # Reporting one rule at a time turns a single mistake
+    # into a guessing game: the student fixes the length,
+    # submits, and only then learns about the digit. All
+    # three are known here, so all three are said here.
+
+    problems: list[str] = []
+
+    if len(password) < MIN_PASSWORD_LENGTH:
+        problems.append(
+            f"be at least {MIN_PASSWORD_LENGTH} characters long"
+        )
+
+    # str.isalpha() and str.isdigit(), not a regex over
+    # [a-zA-Z] and [0-9]. This app's students write Arabic,
+    # and a Latin-only character class would decide that a
+    # perfectly good Arabic password contains no letters at
+    # all and refuse it.
+    if not any(character.isalpha() for character in password):
+        problems.append("contain at least one letter")
+
+    if not any(character.isdigit() for character in password):
+        problems.append("contain at least one digit")
+
+    if not problems:
+        return
+
+    # -----------------------------------------------------
+    # One readable sentence
+    # -----------------------------------------------------
+
+    if len(problems) == 1:
+        requirements = problems[0]
+
+    else:
+        requirements = (
+            ", ".join(problems[:-1])
+            + " and "
+            + problems[-1]
+        )
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Password must {requirements}.",
+    )
+
+
+# =========================================================
+# PYDANTIC SCHEMAS
+# =========================================================
+
+
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=MIN_PASSWORD_LENGTH)
+    # No min_length here on purpose: the length is one of the
+    # three rules validate_password applies, so that it can
+    # answer with a 400 like every other rule.
+    password: str
     full_name: str
 
 
@@ -174,7 +257,7 @@ class ChangePasswordRequest(BaseModel):
     """
 
     current_password: str
-    new_password: str = Field(min_length=MIN_PASSWORD_LENGTH)
+    new_password: str
 
 
 class TokenResponse(BaseModel):
@@ -343,6 +426,12 @@ def register(
     """
     Register a new user.
     """
+
+    # First, before the table is touched at all: a password
+    # that will be refused should cost nothing, and the
+    # student should hear about the password itself rather
+    # than about the email being taken.
+    validate_password(user_data.password)
 
     existing_user = (
         db.query(User)
@@ -647,10 +736,18 @@ def change_password(
     which is why a fresh pair is minted and returned here. The
     student stays where they are; every other session ends.
 
-    The length of new_password is checked by
-    ChangePasswordRequest against MIN_PASSWORD_LENGTH, the same
-    constant registration uses.
+    The new password goes through validate_password, the same
+    function registration uses, so the two endpoints can never
+    disagree about what a usable password is.
     """
+
+    # Ahead of the current-password check, which is where the
+    # length rule used to sit: Pydantic rejected a short
+    # new_password before this function ran at all. Keeping
+    # that order means moving the rule here did not quietly
+    # change which of the two complaints a student sees when
+    # they get both wrong.
+    validate_password(password_data.new_password)
 
     # verify_password, not a comparison of our own: this is the
     # same function /auth/login trusts, so a password that signs

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { getErrorMessage } from '../lib/errors'
+import { PASSWORD_HINT, getPasswordError } from '../lib/password'
 import { Button, Field, Input, InlineError } from '../components/ui'
 import AuthLayout from './AuthLayout'
 
@@ -20,6 +21,16 @@ export default function Register() {
   async function handleSubmit(event) {
     event.preventDefault()
     setError(null)
+
+    /* The same three rules the API applies, checked here first so the
+       ordinary mistake never costs a round trip. The server still checks:
+       this is a convenience, not the rule. */
+    const passwordError = getPasswordError(password)
+    if (passwordError) {
+      setError(passwordError)
+      return
+    }
+
     setSubmitting(true)
     try {
       await register({ email, password, fullName })
@@ -75,7 +86,7 @@ export default function Register() {
           )}
         </Field>
 
-        <Field label="Password" required hint="Use at least 8 characters.">
+        <Field label="Password" required hint={PASSWORD_HINT}>
           {(field) => (
             <Input
               {...field}
