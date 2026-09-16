@@ -7,7 +7,12 @@ const VARIANTS = {
   secondary:
     'bg-surface text-ink border border-line-strong hover:bg-sunken disabled:hover:bg-surface',
   ghost: 'text-ink-soft hover:bg-sunken hover:text-ink',
-  danger: 'bg-danger text-white hover:bg-danger-hover shadow-card disabled:hover:bg-danger',
+  /* The foreground here is a token, not a named colour. In dark mode the
+     danger surface is a light coral, and plain white on it measures 2.92 -
+     below any acceptable contrast threshold. --color-on-danger is white in
+     light mode, so nothing changes there. This was the last place in the
+     project naming a colour directly. */
+  danger: 'bg-danger text-on-danger hover:bg-danger-hover shadow-card disabled:hover:bg-danger',
   quiet: 'text-accent hover:text-accent-hover underline underline-offset-4 decoration-accent-line',
 }
 

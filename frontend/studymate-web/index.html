@@ -12,6 +12,36 @@
       rel="stylesheet"
     />
     <title>StudyMate</title>
+
+    <!--
+      The theme, applied before the app bundle is fetched.
+
+      This has to run here rather than in React. The stylesheet's light
+      values are the defaults, so a preference read after the app boots
+      repaints a dark page from white - a flash on every single load, on
+      every page. Reading it in <head> means the very first paint is
+      already the right colour.
+
+      It is deliberately duplicated: src/lib/theme.js holds the same logic
+      for the running app. Keep the key and the values in step.
+    -->
+    <script>
+      try {
+        var stored = localStorage.getItem('studymate.theme')
+        var theme = stored === 'light' || stored === 'dark' ? stored : 'system'
+
+        document.documentElement.dataset.theme =
+          theme === 'system'
+            ? window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light'
+            : theme
+      } catch (e) {
+        /* A private window, blocked site data, or no matchMedia. The page
+           renders in the stylesheet's light default, which is exactly what
+           it did before this script existed. */
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

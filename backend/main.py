@@ -24,7 +24,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 
 from sqlalchemy.orm import Session
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -120,10 +120,61 @@ CHAT_HISTORY_LIMIT = 50
 # =========================================================
 
 
+# The one place a password length is decided. Registration
+# and the password change below both read it, so the two can
+# never drift apart and accept different passwords.
+#
+# 8 is the number the registration form has always shown the
+# student ("Use at least 8 characters."); until now nothing
+# enforced it, so the form was making a promise the API did
+# not keep.
+MIN_PASSWORD_LENGTH = 8
+
+
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=MIN_PASSWORD_LENGTH)
     full_name: str
+
+
+class UserResponse(BaseModel):
+    """
+    Who the session belongs to.
+
+    Returned by GET and PATCH /auth/me alike, so the browser
+    reads one shape whichever of the two it called.
+    """
+
+    id: UUID
+    email: EmailStr
+    full_name: str
+
+
+class ProfileUpdateRequest(BaseModel):
+    """
+    The one part of the account the student can edit.
+
+    The email is not here: it is the login identifier and is
+    unique across the table, so changing it is a different job
+    with different failure modes.
+    """
+
+    full_name: str
+
+
+class ChangePasswordRequest(BaseModel):
+    """
+    The current password is required as well as the new one.
+
+    An access token alone is not enough to change a password:
+    a borrowed token would otherwise be enough to take the
+    account, and knowing the current password is the only
+    thing that separates the owner from whoever is holding the
+    token.
+    """
+
+    current_password: str
+    new_password: str = Field(min_length=MIN_PASSWORD_LENGTH)
 
 
 class TokenResponse(BaseModel):
@@ -227,6 +278,14 @@ class ConversationUpdateRequest(BaseModel):
     is_pinned: bool | None = None
 
 
+# The widest duration an attempt is allowed to report, in
+# seconds: 24 hours. Not a judgement about how long a quiz
+# should take - it is the point past which the number is
+# obviously not a sitting, but a tab left open overnight or a
+# clock that was changed underneath the page.
+MAX_ATTEMPT_DURATION_SECONDS = 86400
+
+
 class QuizAttemptRequest(BaseModel):
     """
     Example:
@@ -236,11 +295,18 @@ class QuizAttemptRequest(BaseModel):
             "question_uuid_1": "A",
             "question_uuid_2": "B",
             "question_uuid_3": "C"
-        }
+        },
+        "duration_seconds": 245
     }
     """
 
     answers: dict
+
+    # Optional, and it stays optional: the browser measures
+    # this, so a client that does not send it - an older one,
+    # or a page whose stored start time was cleared - must
+    # still be able to submit a perfectly good attempt.
+    duration_seconds: int | None = None
 
 
 class QuizQuestionResponse(BaseModel):
@@ -476,6 +542,159 @@ def logout(
 
     return {
         "message": "Signed out successfully"
+    }
+
+
+# =========================================================
+# CURRENT USER - READ
+# =========================================================
+
+@app.get(
+    "/auth/me",
+    response_model=UserResponse,
+)
+def read_current_user(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    The account behind the access token.
+
+    This exists because the browser had no way to learn the
+    student's name. It was written down at registration and
+    kept in local storage, so the first sign-out lost it and
+    the sidebar fell back to showing the email twice. A name
+    the server can be asked for survives sign-out, a new
+    browser and a second device.
+    """
+
+    return current_user
+
+
+# =========================================================
+# CURRENT USER - UPDATE NAME
+# =========================================================
+
+@app.patch(
+    "/auth/me",
+    response_model=UserResponse,
+)
+def update_current_user(
+    profile_data: ProfileUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Rename the account holder.
+
+    Returns the same shape as GET /auth/me, so the caller can
+    put the response straight back into whatever it was
+    displaying rather than re-fetching.
+    """
+
+    full_name = profile_data.full_name.strip()
+
+    # A name of spaces is an empty name. Trimming first means
+    # "   " is refused here rather than stored and then shown
+    # as a blank line in the sidebar.
+    if not full_name:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Name cannot be empty",
+        )
+
+    # 255 is the width of users.full_name. Refusing here gives
+    # the student a sentence they can act on, instead of the
+    # database raising a driver error further down.
+    if len(full_name) > 255:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Name cannot be longer than 255 characters",
+        )
+
+    current_user.full_name = full_name
+
+    db.commit()
+    db.refresh(current_user)
+
+    return current_user
+
+
+# =========================================================
+# CURRENT USER - CHANGE PASSWORD
+# =========================================================
+
+@app.post(
+    "/auth/change-password",
+    response_model=TokenResponse,
+)
+def change_password(
+    password_data: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Replace the account password.
+
+    Changing a password is also a way of saying "somebody else
+    may be signed in as me", so it revokes every token this
+    account holds - exactly as /auth/logout does, and through
+    the same one line: token_version goes up, and every token
+    minted before this moment stops being accepted.
+
+    That would sign out the browser doing the changing too,
+    which is why a fresh pair is minted and returned here. The
+    student stays where they are; every other session ends.
+
+    The length of new_password is checked by
+    ChangePasswordRequest against MIN_PASSWORD_LENGTH, the same
+    constant registration uses.
+    """
+
+    # verify_password, not a comparison of our own: this is the
+    # same function /auth/login trusts, so a password that signs
+    # in here is exactly a password that signs in there.
+    if not verify_password(
+        password_data.current_password,
+        current_user.password_hash,
+    ):
+
+        raise HTTPException(
+            status_code=400,
+            detail="Current password is incorrect",
+        )
+
+    current_user.password_hash = hash_password(
+        password_data.new_password
+    )
+
+    current_user.token_version += 1
+
+    db.commit()
+    db.refresh(current_user)
+
+    # Minted after the commit, so they carry the raised version
+    # and are the only tokens this account now has that
+    # get_current_user will accept.
+    access_token = create_access_token(
+        data={
+            "sub": str(current_user.id),
+            "ver": current_user.token_version,
+        }
+    )
+
+    refresh_token = create_refresh_token(
+        data={
+            "sub": str(current_user.id),
+            "ver": current_user.token_version,
+        }
+    )
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
     }
 
 
@@ -1742,6 +1961,37 @@ def submit_quiz_attempt(
     """
 
     # -----------------------------------------------------
+    # How long it took
+    # -----------------------------------------------------
+    #
+    # Checked before anything else is done, so a nonsense
+    # duration costs nothing: rejecting it after grading would
+    # mean paying for the model calls and then throwing the
+    # attempt away.
+    #
+    # The number is measured in the browser and cannot be
+    # trusted, only bounded. A negative duration or one longer
+    # than a day did not happen, so it is refused rather than
+    # written into the table as a fact.
+
+    duration_seconds = attempt_data.duration_seconds
+
+    if duration_seconds is not None:
+
+        if (
+            duration_seconds < 0
+            or duration_seconds > MAX_ATTEMPT_DURATION_SECONDS
+        ):
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "duration_seconds must be between 0 and "
+                    f"{MAX_ATTEMPT_DURATION_SECONDS}"
+                ),
+            )
+
+    # -----------------------------------------------------
     # Find quiz
     # -----------------------------------------------------
 
@@ -1970,6 +2220,7 @@ def submit_quiz_attempt(
         user_id=current_user.id,
         score=score,
         answers=submitted_answers,
+        duration_seconds=duration_seconds,
     )
 
     db.add(attempt)
@@ -2098,6 +2349,11 @@ def list_quiz_attempts(
                     if attempt.completed_at
                     else None
                 ),
+
+                # None for every attempt recorded before the
+                # timer existed. The browser shows a dash for
+                # those rather than a misleading 00:00.
+                "duration_seconds": attempt.duration_seconds,
             }
             for attempt in attempts
         ],
@@ -2263,6 +2519,11 @@ def get_quiz_attempt(
                 if attempt.completed_at
                 else None
             ),
+
+            # Same as the list endpoint, so a caller reading one
+            # attempt sees the field it already knows from the
+            # table it clicked through from.
+            "duration_seconds": attempt.duration_seconds,
         },
 
         "questions": rows,

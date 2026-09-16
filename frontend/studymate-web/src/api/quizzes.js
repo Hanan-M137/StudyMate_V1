@@ -36,7 +36,11 @@ import client from './client'
  *        "short_answer"    -> options = null  (free-text answer)
  *   -> correct_answer and explanation are correctly absent before submission.
  *
- * POST /quizzes/{quiz_id}/attempts *   request:  { answers: { "<question_id>": "A", ... } }
+ * POST /quizzes/{quiz_id}/attempts
+ *   request:  { answers: { "<question_id>": "A", ... },
+ *               duration_seconds?: 245 }
+ *   -> duration_seconds is optional and is refused outside 0..86400 with a
+ *      400. It is measured in the browser, so it is advisory.
  *   response: { message, attempt_id, score, total_questions, percentage,
  *               correct_answers, partial_answers, wrong_answers,
  *               results: [ { question_id, student_answer, correct, verdict,
@@ -51,6 +55,11 @@ import client from './client'
  *      GET /quizzes/{quiz_id} still omits both, so they are not readable
  *      before the student answers.
  */
+
+/* The backend's own ceiling for an attempt duration, in seconds - 24 hours.
+   Mirrored here so a duration it would refuse is never sent at all. Keep it
+   in step with MAX_ATTEMPT_DURATION_SECONDS in backend/main.py. */
+export const MAX_ATTEMPT_DURATION_SECONDS = 86400
 
 export const QUESTION_TYPES = {
   MULTIPLE_CHOICE: 'multiple_choice',
@@ -249,8 +258,24 @@ export async function getQuiz(quizId) {
   }
 }
 
-export async function submitQuizAttempt(quizId, answers) {
-  const { data } = await client.post(`/quizzes/${quizId}/attempts`, { answers })
+/**
+ * `durationSeconds` is left out of the request unless it is a whole number
+ * the backend will accept. Sending something out of range earns a 400, and
+ * losing a set of answers over a clock is not a trade worth making - an
+ * attempt with no recorded time is what the column is nullable for.
+ */
+export async function submitQuizAttempt(quizId, answers, durationSeconds) {
+  const payload = { answers }
+
+  if (
+    Number.isInteger(durationSeconds) &&
+    durationSeconds >= 0 &&
+    durationSeconds <= MAX_ATTEMPT_DURATION_SECONDS
+  ) {
+    payload.duration_seconds = durationSeconds
+  }
+
+  const { data } = await client.post(`/quizzes/${quizId}/attempts`, payload)
 
   return {
     attemptId: data?.attempt_id ?? null,
@@ -268,7 +293,11 @@ export async function submitQuizAttempt(quizId, answers) {
 /**
  * GET /quizzes/{quiz_id}/attempts
  *   { total_questions, attempts: [ { id, score, total_questions,
- *                                    percentage, completed_at } ] }
+ *                                    percentage, completed_at,
+ *                                    duration_seconds } ] }
+ *
+ * duration_seconds is null for every attempt made before the timer existed,
+ * and those are shown as a dash rather than as a time of zero.
  *
  * Newest first. Per-question verdicts are not stored, so an attempt
  * carries its score and nothing more.
@@ -283,6 +312,7 @@ export async function listQuizAttempts(quizId) {
     totalQuestions: numberOrNull(row?.total_questions),
     percentage: numberOrNull(row?.percentage),
     completedAt: row?.completed_at ?? null,
+    durationSeconds: numberOrNull(row?.duration_seconds),
   }))
 }
 /**
@@ -306,6 +336,7 @@ export async function getQuizAttempt(quizId, attemptId) {
     totalQuestions: numberOrNull(meta.total_questions),
     percentage: numberOrNull(meta.percentage),
     completedAt: meta.completed_at ?? null,
+    durationSeconds: numberOrNull(meta.duration_seconds),
     questions: rows.map((row, index) => ({
       id: String(row?.id ?? `attempt-question-${index}`),
       text: row?.question_text ?? '',

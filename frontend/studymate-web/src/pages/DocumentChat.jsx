@@ -5,6 +5,7 @@ import { getConversation } from '../api/conversations'
 import { sendChatMessage } from '../api/chat'
 import { getErrorMessage } from '../lib/errors'
 import SourceList from '../components/SourceList'
+import VoiceInput from '../components/VoiceInput'
 import { ChatIcon, SparkIcon } from '../components/icons'
 import {
   Badge,
@@ -280,7 +281,7 @@ export default function DocumentChat() {
           event.preventDefault()
           send(draft)
         }}
-        className="sticky bottom-0 mt-5 flex gap-2 border-t border-line bg-paper/95 py-4 backdrop-blur"
+        className="sticky bottom-0 mt-5 flex items-start gap-2 border-t border-line bg-paper/95 py-4 backdrop-blur"
       >
         <label htmlFor="chat-input" className="sr-only">
           Ask about this document
@@ -288,11 +289,32 @@ export default function DocumentChat() {
         <Input
           id="chat-input"
           ref={inputRef}
+          className="min-w-0 flex-1"
           value={draft}
           disabled={!ready || sending || resuming}
           placeholder={ready ? 'Ask about this document...' : 'Waiting for processing...'}
           onChange={(event) => setDraft(event.target.value)}
         />
+
+        {/* Between the field and Send, not inside the field. A control inside
+            a text input has to be positioned over text the student is still
+            editing, and this one is two controls and sometimes an error
+            message - it does not fit there.
+
+            It appends to the draft rather than replacing it, so a question
+            half typed and half spoken comes out whole. In Firefox and Safari
+            the component renders nothing at all: there is no SpeechRecognition
+            to drive it, and a microphone that does nothing when clicked is
+            worse than no microphone.
+
+            The wrapper carries the width rather than a prop: VoiceInput's own
+            root is `w-full sm:w-44`, so inside a sized box it fills the box on
+            a phone and keeps its natural width from `sm` up. That leaves the
+            component itself untouched - same behaviour, same markup. */}
+        <div className="no-print w-36 shrink-0 sm:w-44">
+          <VoiceInput value={draft} onChange={setDraft} />
+        </div>
+
         <Button
           type="submit"
           disabled={!ready || sending || resuming || !draft.trim()}

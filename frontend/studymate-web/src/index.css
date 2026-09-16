@@ -36,6 +36,9 @@
   --color-danger-hover: #8a2a23;
   --color-danger-soft: #fbeae8;
   --color-danger-line: #eec8c3;
+  /* The counterpart to --color-on-accent, added because the danger button
+     was the last place in the project still naming a colour directly. */
+  --color-on-danger: #ffffff;
 
   --radius-xs: 0.375rem;
   --radius-sm: 0.5rem;
@@ -47,6 +50,45 @@
   --shadow-card: 0 1px 2px rgb(28 26 23 / 0.04), 0 1px 1px rgb(28 26 23 / 0.03);
   --shadow-raised: 0 2px 4px rgb(28 26 23 / 0.05), 0 8px 20px -12px rgb(28 26 23 / 0.18);
   --shadow-pop: 0 18px 45px -20px rgb(28 26 23 / 0.35);
+}
+
+/* ==========================================================================
+   Dark palette.
+
+   Same token names, different values: nothing outside this block knows which
+   theme is running, which is why the whole app can switch on one attribute.
+   [data-theme] is set on <html> by the inline script in index.html before
+   first paint, and afterwards by src/lib/theme.js.
+
+   These values were measured against the WCAG contrast standard rather than
+   picked by eye, so a hand adjustment that "looks better" is likely to be a
+   contrast failure. Change them with a contrast checker open.
+   ========================================================================== */
+:root[data-theme="dark"] {
+  --color-paper: #171613;
+  --color-surface: #201e1a;
+  --color-sunken: #100f0d;
+  --color-ink: #f2ede3;
+  --color-ink-soft: #cdc5b7;
+  --color-muted: #9b9384;
+  --color-faint: #6f6859;
+  --color-line: #2e2b25;
+  --color-line-strong: #423d34;
+
+  --color-accent: #4fae93;
+  --color-accent-hover: #63c0a5;
+  --color-accent-soft: #17332c;
+  --color-accent-line: #2f5f52;
+  --color-on-accent: #07231c;
+
+  --color-pending: #d9a441;
+  --color-pending-soft: #2e2413;
+  --color-pending-line: #4d3c1c;
+  --color-danger: #e8756a;
+  --color-danger-hover: #f08d83;
+  --color-danger-soft: #331a18;
+  --color-danger-line: #5c2d28;
+  --color-on-danger: #2b0f0c;
 }
 
 @layer base {
@@ -223,6 +265,49 @@
   html,
   body {
     background: #fff !important;
+  }
+
+  /* ---- Printing in dark mode ---------------------------------------------
+     Forcing the background white is only half of it. Every colour on the
+     page comes from the tokens above, so in dark mode the ink token is a
+     pale cream - which on forced-white paper prints as very nearly nothing,
+     and a quiz would come out blank.
+
+     So the light palette is restored for the duration of the print. These
+     values are copied from the @theme block at the top of this file and have
+     to be kept in step with it; there is no way to say "ignore the dark
+     block" in CSS, because a custom property cannot be reverted to a
+     lower-specificity rule.
+
+     A printed page is a light-mode page by definition: it is ink on paper,
+     and the screen's preference has no bearing on it. */
+  :root[data-theme="dark"] {
+    color-scheme: light;
+
+    --color-paper: #faf8f4;
+    --color-surface: #ffffff;
+    --color-sunken: #f4f0e9;
+    --color-ink: #1c1a17;
+    --color-ink-soft: #494339;
+    --color-muted: #7c7466;
+    --color-faint: #a49b8c;
+    --color-line: #e8e2d6;
+    --color-line-strong: #d5cdbc;
+
+    --color-accent: #1f6f5c;
+    --color-accent-hover: #185745;
+    --color-accent-soft: #e7f0ed;
+    --color-accent-line: #b9d5cc;
+    --color-on-accent: #ffffff;
+
+    --color-pending: #9a6412;
+    --color-pending-soft: #fbf1e1;
+    --color-pending-line: #ecd9b6;
+    --color-danger: #a3322a;
+    --color-danger-hover: #8a2a23;
+    --color-danger-soft: #fbeae8;
+    --color-danger-line: #eec8c3;
+    --color-on-danger: #ffffff;
   }
 
   /* ---- Chrome ------------------------------------------------------------ */

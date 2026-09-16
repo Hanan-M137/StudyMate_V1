@@ -129,3 +129,22 @@ export function MicIcon(props) {
     </svg>
   )
 }
+
+/** A cog, for the settings entry under the account row. */
+export function SettingsIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="10" cy="10" r="2.4" />
+      <path d="M10 2.5l.9 1.9 2.1-.5.6 2 2 .6-.5 2.1L17 10l-1.9.9.5 2.1-2 .6-.6 2-2.1-.5L10 17.5l-.9-1.9-2.1.5-.6-2-2-.6.5-2.1L3 10l1.9-.9L4.4 7l2-.6.6-2 2.1.5z" />
+    </svg>
+  )
+}
+
+/** An upward arrow, for the back-to-top button. */
+export function ArrowUpIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M10 16V4.5M5.5 9 10 4.5 14.5 9" />
+    </svg>
+  )
+}

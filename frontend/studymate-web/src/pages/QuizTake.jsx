@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
+  MAX_ATTEMPT_DURATION_SECONDS,
   getQuiz,
   getQuizAttempt,
   listQuizAttempts,
@@ -19,9 +20,85 @@ import {
   cx,
 } from '../components/ui'
 
+/* ==========================================================================
+   The timer.
+
+   WHAT THIS MEASURES, HONESTLY: wall-clock time in this browser between the
+   quiz being opened and the answers being sent. It is not a supervised
+   measurement and it never can be - the student owns the clock, the tab and
+   the storage behind it. It is here as information for the person revising,
+   which is what this app is for, and nothing is scored on it.
+
+   The start is kept in local storage rather than in React state so that
+   reloading the page mid-quiz - by far the most common way a timer gets lost
+   - does not restart it. Closing the tab for a week is not addressed and is
+   not worth addressing: the backend's 24-hour ceiling catches the absurd
+   cases, and this page sends nothing at all rather than a clamped number.
+   ========================================================================== */
+
+const QUIZ_START_KEY_PREFIX = 'studymate.quiz-start.'
+
+function quizStartKey(quizId) {
+  return `${QUIZ_START_KEY_PREFIX}${quizId}`
+}
+
+/** The stored start for this quiz, writing one if there is none yet. */
+function readOrCreateStart(quizId) {
+  const now = Date.now()
+
+  try {
+    const stored = Number(localStorage.getItem(quizStartKey(quizId)))
+
+    /* A stored time in the future is a clock that has been moved, not a
+       start: it would produce a negative duration, so it is replaced. */
+    if (Number.isFinite(stored) && stored > 0 && stored <= now) return stored
+
+    localStorage.setItem(quizStartKey(quizId), String(now))
+  } catch {
+    /* Storage unavailable. The timer still runs for as long as the page is
+       open; it just will not survive a reload. */
+  }
+
+  return now
+}
+
+function clearStart(quizId) {
+  try {
+    localStorage.removeItem(quizStartKey(quizId))
+  } catch {
+    /* Nothing was stored, so nothing needs clearing. */
+  }
+}
+
+/** Seconds as mm:ss. Past an hour the minutes keep counting rather than
+    rolling over into a third field: 72:05 is one number to read. */
+function formatDuration(totalSeconds) {
+  if (totalSeconds == null) return null
+  if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return null
+
+  const whole = Math.floor(totalSeconds)
+  const minutes = Math.floor(whole / 60)
+  const seconds = whole % 60
+
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
+/**
+ * The route element: nothing but a remount boundary.
+ *
+ * React Router renders the same element for /quizzes/A and /quizzes/B, so
+ * without the key this component would carry one quiz's start time into the
+ * next one. Keying on the id is React's own answer to "reset all the state
+ * when this changes", and it is cheaper to read than a set of effects each
+ * resetting one piece.
+ */
 export default function QuizTake() {
   const { quizId } = useParams()
 
+  return <QuizTakePage key={quizId} quizId={quizId} />
+}
+
+function QuizTakePage({ quizId }) {
   const [quiz, setQuiz] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -31,6 +108,11 @@ export default function QuizTake() {
   const [submitError, setSubmitError] = useState(null)
   const [result, setResult] = useState(null)
   const [attempts, setAttempts] = useState([])
+
+  /* The clock is two pieces of state and one derived number rather than a
+     counter ticking in an effect: `now` is the only thing the interval
+     touches, and the elapsed seconds fall out of it during render. */
+  const [now, setNow] = useState(() => Date.now())
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -54,6 +136,32 @@ export default function QuizTake() {
     load()
   }, [load])
 
+  /* The clock starts when the quiz is opened, not when the first answer is
+     given: a student reading the questions through before answering is
+     taking the quiz. Reopening a quiz picks the stored start back up, so a
+     reload does not hand out free time - which is the whole reason the start
+     lives in storage and not in state. */
+  const [startedAt, setStartedAt] = useState(() => readOrCreateStart(quizId))
+
+  /* One interval, and none of it once the answers are in: after submission
+     `now` stops moving, so the number on screen settles on how long the
+     attempt actually took. */
+  useEffect(() => {
+    if (result) return undefined
+
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+
+    return () => clearInterval(timer)
+  }, [result])
+
+  const elapsed = Math.max(0, Math.round((now - startedAt) / 1000))
+
+  function restartTimer() {
+    clearStart(quizId)
+    setNow(Date.now())
+    setStartedAt(readOrCreateStart(quizId))
+  }
+
   const questions = quiz?.questions || []
   const answeredCount = useMemo(
     () => Object.values(answers).filter((value) => String(value ?? '').trim() !== '').length,
@@ -71,7 +179,20 @@ export default function QuizTake() {
         const trimmed = String(value ?? '').trim()
         if (trimmed !== '') payload[questionId] = trimmed
       }
-      setResult(await submitQuizAttempt(quizId, payload))
+      /* Out of range means the tab was left open overnight rather than
+         that the quiz took that long, so nothing is sent: an attempt with no
+         time against it is truthful, and a clamped 24:00:00 would not be.
+         The answers matter more than the measurement. */
+      const duration =
+        elapsed >= 0 && elapsed <= MAX_ATTEMPT_DURATION_SECONDS ? elapsed : undefined
+
+      setResult(await submitQuizAttempt(quizId, payload, duration))
+
+      /* Cleared only after the submission succeeded. A failed attempt is
+         still in progress, and the student should not be handed a fresh
+         clock for having to press the button twice. */
+      clearStart(quizId)
+
       // The attempt just recorded belongs in the table too.
       listQuizAttempts(quizId).then(setAttempts).catch(() => {})
       window.scrollTo({
@@ -106,9 +227,23 @@ export default function QuizTake() {
             &larr; All quizzes
           </Link>
           <h1 className="type-display mt-1.5">{quiz.title}</h1>
-          <p className="type-small mt-1 text-muted">
-            {questions.length} {questions.length === 1 ? 'question' : 'questions'} &middot; mixed
-            question types
+          <p className="type-small mt-1 flex flex-wrap items-center gap-x-1.5 text-muted">
+            <span>
+              {questions.length} {questions.length === 1 ? 'question' : 'questions'} &middot; mixed
+              question types
+            </span>
+
+            {/* no-print in its own right, not only through the header: a
+                stopwatch is a screen thing, and a time printed on a
+                worksheet would be a time nobody spent on it. */}
+            <span className="no-print">&middot;</span>
+            <span
+              className="no-print tabular-nums"
+              role="timer"
+              aria-label={result ? 'Time taken' : 'Time elapsed'}
+            >
+              {formatDuration(elapsed)}
+            </span>
           </p>
         </div>
 
@@ -205,6 +340,8 @@ export default function QuizTake() {
                 onClick={() => {
                   setResult(null)
                   setAnswers({})
+                  // A retake is a new attempt, and it is timed as one.
+                  restartTimer()
                 }}
               >
                 Retake quiz
@@ -496,6 +633,9 @@ function AttemptsTable({ quizId, attempts }) {
                 Percentage
               </th>
               <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
+                Time
+              </th>
+              <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
                 Taken
               </th>
               <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
@@ -515,6 +655,12 @@ function AttemptsTable({ quizId, attempts }) {
                 </td>
                 <td className="px-4 py-2.5 tabular-nums text-ink">
                   {attempt.percentage != null ? `${Math.round(attempt.percentage)}%` : '--'}
+                </td>
+                {/* An em dash, not 00:00: every attempt made before the
+                    timer existed has no duration, and a zero would read as a
+                    quiz answered instantly. */}
+                <td className="px-4 py-2.5 tabular-nums text-ink">
+                  {formatDuration(attempt.durationSeconds) || '—'}
                 </td>
                 <td className="px-4 py-2.5 text-muted">
                   {formatDateTime(attempt.completedAt) || '--'}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import BackToTop from './BackToTop'
 import { Button, cx } from './ui'
 import {
   ChatIcon,
@@ -9,6 +10,7 @@ import {
   LogoutIcon,
   MenuIcon,
   QuizIcon,
+  SettingsIcon,
 } from './icons'
 
 const NAV = [
@@ -31,6 +33,10 @@ export default function AppShell() {
   function handleLogout() {
     logout()
     navigate('/login', { replace: true })
+  }
+
+  function handleSettings() {
+    navigate('/settings')
   }
 
   return (
@@ -84,7 +90,12 @@ export default function AppShell() {
               </button>
             </div>
             <NavLinks />
-            <UserPanel displayName={displayName} email={email} onLogout={handleLogout} />
+            <UserPanel
+              displayName={displayName}
+              email={email}
+              onSettings={handleSettings}
+              onLogout={handleLogout}
+            />
           </nav>
         </div>
       ) : null}
@@ -95,7 +106,12 @@ export default function AppShell() {
           <Wordmark />
         </div>
         <NavLinks />
-        <UserPanel displayName={displayName} email={email} onLogout={handleLogout} />
+        <UserPanel
+          displayName={displayName}
+          email={email}
+          onSettings={handleSettings}
+          onLogout={handleLogout}
+        />
       </aside>
 
       <main id="main" className="min-w-0 px-4 py-6 sm:px-6 lg:px-10 lg:py-10">
@@ -103,6 +119,11 @@ export default function AppShell() {
           <Outlet />
         </div>
       </main>
+
+      {/* Mounted once here rather than per page: every route inside the shell
+          can grow long enough to need it, and the window is what scrolls for
+          all of them. */}
+      <BackToTop />
     </div>
   )
 }
@@ -161,7 +182,7 @@ function NavLinks() {
   )
 }
 
-function UserPanel({ displayName, email, onLogout }) {
+function UserPanel({ displayName, email, onSettings, onLogout }) {
   const label = displayName || email || 'Signed in'
   const initials = (displayName || email || '?')
     .split(/[\s@.]+/)
@@ -181,11 +202,25 @@ function UserPanel({ displayName, email, onLogout }) {
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-ink">{label}</span>
-          {displayName && email ? (
+          {/* The second line is the email, and it is only worth a line when it
+              is not already the first one. Comparing against displayName
+              rather than checking that a name exists means the row never
+              shows the same address twice, whatever the reason the name is
+              missing. */}
+          {label !== email && email ? (
             <span className="type-micro block truncate text-faint">{email}</span>
           ) : null}
         </span>
       </div>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="no-print mt-1 w-full justify-start"
+        onClick={onSettings}
+      >
+        <SettingsIcon className="h-4 w-4" />
+        Settings
+      </Button>
       <Button variant="ghost" size="sm" className="mt-1 w-full justify-start" onClick={onLogout}>
         <LogoutIcon className="h-4 w-4" />
         Sign out

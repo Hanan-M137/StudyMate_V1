@@ -555,6 +555,23 @@ class QuizAttempt(Base):
         server_default=func.now(),
     )
 
+    # How long the student spent on this attempt, in seconds.
+    #
+    # nullable=True because every attempt recorded before this
+    # column existed has no duration, and those rows must stay
+    # valid rather than be invented a plausible-looking number.
+    # The reading code shows a dash for them.
+    #
+    # The measurement is taken in the browser, so it is advisory:
+    # a student who wants a better time can get one. That is
+    # accepted deliberately - this is a self-study tool, not a
+    # proctored exam - and it is why the value is stored as
+    # information rather than used to score anything.
+    duration_seconds = Column(
+        Integer,
+        nullable=True,
+    )
+
     # Relationships
     quiz = relationship(
         "Quiz",

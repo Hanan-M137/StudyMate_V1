@@ -10,6 +10,7 @@ import Conversations from './pages/Conversations'
 import ConversationDetail from './pages/ConversationDetail'
 import Quizzes from './pages/Quizzes'
 import QuizTake from './pages/QuizTake'
+import Settings from './pages/Settings'
 import NotFound from './pages/NotFound'
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
             <Route path="/conversations/:id" element={<ConversationDetail />} />
             <Route path="/quizzes" element={<Quizzes />} />
             <Route path="/quizzes/:quizId" element={<QuizTake />} />
+            <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<NotFound />} />
           </Route>
         </Route>
