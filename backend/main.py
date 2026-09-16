@@ -24,7 +24,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 
 from sqlalchemy.orm import Session
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -276,8 +276,7 @@ class DocumentResponse(BaseModel):
     filename: str
     status: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DocumentUpdateRequest(BaseModel):
@@ -399,8 +398,7 @@ class QuizQuestionResponse(BaseModel):
     options: dict | list | None
     source_page: int | None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # =========================================================
