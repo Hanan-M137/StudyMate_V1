@@ -4,7 +4,6 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 import os
-import shutil
 from uuid import UUID, uuid4
 
 from dotenv import load_dotenv
@@ -69,6 +68,21 @@ from ai.service import (
 )
 
 from ai.rag_service import answer_question
+
+
+# =========================================================
+# OFFICE DOCUMENT CONVERSION
+# =========================================================
+#
+# The whole feature lives in ai/convert.py. Only the three questions
+# below are asked here, and nothing in this file knows that the answer
+# involves LibreOffice.
+
+from ai.convert import (
+    find_soffice,
+    is_supported,
+    needs_conversion,
+)
 
 
 # =========================================================
@@ -794,6 +808,74 @@ def change_password(
 
 
 # =========================================================
+# UPLOAD LIMITS
+# =========================================================
+
+def megabytes_from_environment(
+    name: str,
+    default: int,
+) -> int:
+    """
+    Read a megabyte limit from the environment, falling back to the
+    default if it is missing or not a positive whole number.
+
+    A typo in .env should not stop the server from starting, and it
+    should not silently turn a limit off either - so anything
+    unreadable becomes the default rather than zero.
+    """
+
+    raw_value = os.environ.get(name)
+
+    if not raw_value:
+        return default
+
+    try:
+        value = int(raw_value.strip())
+
+    except ValueError:
+        return default
+
+    return value if value > 0 else default
+
+
+# Applies to every upload. This one only protects the disk and catches
+# accidents - a student who picks the wrong file, a download that went
+# wrong. It is deliberately generous: the owner already works with a
+# 35.9 MB PDF every day.
+MAX_UPLOAD_MB = megabytes_from_environment(
+    "MAX_UPLOAD_MB",
+    200,
+)
+
+# Applies only to files that have to be converted first. It is really a
+# time limit wearing a size limit's clothes: conversion was measured at
+# roughly 2 seconds per megabyte, so 100 MB is about 200 seconds of
+# work. A PDF is never converted and so is never measured against this -
+# applying it to PDFs would refuse a file for a cost it does not incur.
+MAX_CONVERT_MB = megabytes_from_environment(
+    "MAX_CONVERT_MB",
+    100,
+)
+
+# The off switch. Set ENABLE_FILE_CONVERSION=false in .env and non-PDF
+# uploads are refused exactly as they were before this feature existed,
+# with no code change. Anything that is not a recognisable "yes" counts
+# as off, so a typo disables a feature that is still on trial rather
+# than enabling one the owner meant to turn off.
+ENABLE_FILE_CONVERSION = (
+    os.environ.get("ENABLE_FILE_CONVERSION", "true")
+    .strip()
+    .lower()
+    in {"true", "1", "yes", "on"}
+)
+
+# How much of the upload is held in memory at once while it is written
+# to disk. Unchanged from the block size the previous implementation
+# passed to shutil.copyfileobj.
+UPLOAD_BLOCK_BYTES = 1024 * 1024
+
+
+# =========================================================
 # DOCUMENTS - UPLOAD
 # =========================================================
 
@@ -808,10 +890,13 @@ async def upload_document(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Upload a PDF document.
+    Upload a PDF document, or an Office document that will be
+    converted to PDF before it is processed.
 
     The document is first saved to disk and the database.
-    RAG processing is then started as a background task.
+    RAG processing is then started as a background task, and the
+    conversion - when there is one - happens inside that same
+    background task.
 
     The uploaded file is copied in blocks instead of being
     loaded completely into memory.
@@ -823,18 +908,81 @@ async def upload_document(
             detail="Filename is required",
         )
 
-    if not file.filename.lower().endswith(".pdf"):
+    # -----------------------------------------------------
+    # Take the name apart before trusting it
+    # -----------------------------------------------------
+    #
+    # The client chooses this string, and it is about to become part
+    # of a path. Both separators are folded to "/" first, because
+    # os.path.basename on Linux does not treat a backslash as one -
+    # so a Windows-shaped "..\..\evil.pdf" would survive basename
+    # untouched on a Linux server and walk out of the uploads
+    # directory. A name that is nothing but dots is refused outright.
+
+    original_filename = os.path.basename(
+        file.filename.replace("\\", "/")
+    ).strip()
+
+    if (
+        not original_filename
+        or set(original_filename) <= {"."}
+    ):
         raise HTTPException(
             status_code=400,
-            detail="Only PDF files are supported",
+            detail="Filename is required",
         )
+
+    # -----------------------------------------------------
+    # Which file types are accepted
+    # -----------------------------------------------------
+    #
+    # Checked before anything is written, so a file we already know
+    # we will refuse never reaches the disk at all.
+
+    if not is_supported(original_filename):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Supported file types are PDF, Word, PowerPoint, "
+                "Excel and OpenDocument."
+            ),
+        )
+
+    if needs_conversion(original_filename):
+
+        if not ENABLE_FILE_CONVERSION:
+            raise HTTPException(
+                status_code=400,
+                detail="Only PDF files are supported",
+            )
+
+        # Resolved per upload rather than at startup, so a server whose
+        # LibreOffice is missing still serves PDF uploads normally and
+        # one that gains a LibreOffice picks it up without a restart.
+        #
+        # 503 rather than 400: the file is fine, the server is not.
+        # The student is not told the name of a program they do not
+        # have, but the log is, because that is who can act on it.
+        if not find_soffice():
+
+            logger.error(
+                "Refused %s: LibreOffice was not found. "
+                "Set SOFFICE_CMD or install it.",
+                original_filename,
+            )
+
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "This file type cannot be converted on the "
+                    "server right now. Please upload a PDF instead."
+                ),
+            )
 
     os.makedirs(
         "uploads",
         exist_ok=True,
     )
-
-    original_filename = file.filename
 
     safe_filename = (
         f"{uuid4()}_{original_filename}"
@@ -855,19 +1003,79 @@ async def upload_document(
     #
     #     contents = await file.read()
     #
-    # because that loads the entire PDF into memory.
+    # with no argument, because that loads the entire file into
+    # memory. Read one block at a time instead.
     #
-    # Instead, copy the file in chunks.
+    # The bytes are counted as they go past because that is the only
+    # moment we can count them: an UploadFile does not know its own
+    # size until it has been read, and a Content-Length header is the
+    # client's claim rather than a fact.
     # -----------------------------------------------------
+
+    max_upload_bytes = MAX_UPLOAD_MB * 1024 * 1024
+
+    bytes_written = 0
+
+    too_large = False
 
     with open(
         file_path,
         "wb",
     ) as buffer:
-        shutil.copyfileobj(
-            file.file,
-            buffer,
-            length=1024 * 1024,
+
+        while True:
+
+            block = await file.read(UPLOAD_BLOCK_BYTES)
+
+            if not block:
+                break
+
+            bytes_written += len(block)
+
+            # Tested before the write, so not one byte past the limit
+            # is ever stored.
+            if bytes_written > max_upload_bytes:
+                too_large = True
+                break
+
+            buffer.write(block)
+
+    # The partial file is deleted outside the `with`, because on
+    # Windows a file still open cannot be removed.
+    if too_large:
+
+        os.remove(file_path)
+
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"This file is larger than the {MAX_UPLOAD_MB} MB "
+                f"upload limit."
+            ),
+        )
+
+    # -----------------------------------------------------
+    # The stricter limit, for files that must be converted
+    # -----------------------------------------------------
+    #
+    # Checked here, with the file on disk and before LibreOffice has
+    # been asked to do anything, so an oversized document costs a
+    # write and a delete rather than several minutes of conversion.
+
+    if (
+        needs_conversion(original_filename)
+        and bytes_written > MAX_CONVERT_MB * 1024 * 1024
+    ):
+
+        os.remove(file_path)
+
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Office documents are limited to {MAX_CONVERT_MB} MB "
+                f"because they have to be converted first. PDF files "
+                f"up to {MAX_UPLOAD_MB} MB are accepted."
+            ),
         )
 
     document = Document(

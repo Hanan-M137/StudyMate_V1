@@ -119,6 +119,18 @@ export default {
     firstPageMin: 'The first page must be 1 or greater.',
     lastPageBeforeFirst: 'The last page cannot come before the first page.',
     noSuchPage: 'This document has {pages} pages, so it has no page {page}.',
+
+    /* The four ways an upload can be refused by the server. The two size
+       limits are kept apart on purpose: they are different limits for
+       different reasons, and a student who hits the lower one needs to be
+       told that a PDF of the same size would have been accepted. */
+    unsupportedType:
+      'Supported file types are PDF, Word, PowerPoint, Excel and OpenDocument.',
+    uploadTooLarge: 'This file is larger than the {limit} MB upload limit.',
+    convertTooLarge:
+      'Office documents are limited to {convertLimit} MB because they have to be converted first. PDF files up to {uploadLimit} MB are accepted.',
+    conversionUnavailable:
+      'This file type cannot be converted on the server right now. Please upload a PDF instead.',
   },
 
   /* ========================================================================
@@ -191,7 +203,7 @@ export default {
     eyebrow: 'Library',
     title: 'Documents',
     description:
-      'Upload a PDF, wait for it to be indexed, then chat with it or turn it into a quiz.',
+      'Upload a document, wait for it to be indexed, then chat with it or turn it into a quiz.',
 
     loading: 'Loading your documents',
     couldNotLoad: 'Could not load your documents.',
@@ -204,7 +216,7 @@ export default {
     countOther: '{count} documents',
     stillProcessing: '{count} still processing',
 
-    onlyPdf: 'Only PDF files can be uploaded.',
+    unsupportedFile: 'That file type cannot be uploaded.',
 
     /* The heading of the error block and the sentence inside it. The heading
        names the thing that failed; the sentence is what is said when the
@@ -239,14 +251,18 @@ export default {
      ======================================================================== */
 
   upload: {
-    dropHere: 'Drop a PDF here',
+    dropHere: 'Drop a file here',
 
     /* Three pieces of one sentence, because a button sits in the middle of
-       it: "or browse your files. PDF only." Batch 2 will want this as one
-       sentence with the button around a marked word instead. */
+       it: "or browse your files. PDF, Word, PowerPoint, Excel or
+       OpenDocument." Batch 2 will want this as one sentence with the button
+       around a marked word instead.
+
+       The format names are written the way the student sees them in their
+       own machine's file picker, rather than as extensions. */
     or: 'or',
     browse: 'browse your files',
-    pdfOnly: '. PDF only.',
+    fileTypes: '. PDF, Word, PowerPoint, Excel or OpenDocument.',
 
     uploading: 'Uploading',
     progress: 'Upload progress',

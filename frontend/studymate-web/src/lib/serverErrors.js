@@ -10,6 +10,9 @@
      - a wrong email or password at sign-in
      - an email that is already registered
      - a file that is not a PDF
+     - a file whose type is not accepted at all, one that is over the
+       general upload limit, one that is over the lower limit that applies
+       only to files needing conversion, and a server that cannot convert
      - a wrong current password when changing it
      - the quiz form's validation: question count, question types,
        and the page range
@@ -44,7 +47,21 @@ import { MIN_PASSWORD_LENGTH, PASSWORD_ERROR_KEYS } from './password'
 const EXACT = {
   'Invalid email or password': 'server.invalidCredentials',
   'Email already registered': 'server.emailRegistered',
+  /* Still sent when ENABLE_FILE_CONVERSION is off, which is the whole
+     point of that switch: the API says exactly what it said before the
+     conversion feature existed. */
   'Only PDF files are supported': 'server.onlyPdf',
+
+  'Supported file types are PDF, Word, PowerPoint, Excel and OpenDocument.':
+    'server.unsupportedType',
+
+  /* A 503, not a 400. The file was fine; the server could not convert it.
+     The English does not name LibreOffice and neither does the Arabic -
+     the student cannot install it, and the server log says so for the
+     person who can. */
+  'This file type cannot be converted on the server right now. Please upload a PDF instead.':
+    'server.conversionUnavailable',
+
   'Current password is incorrect': 'server.currentPasswordIncorrect',
 
   'num_questions must be at least 1': 'server.numQuestionsMin',
@@ -75,6 +92,28 @@ const PATTERNS = [
     test: /^This document has (\d+) pages, so it has no page (\d+)\.$/,
     key: 'server.noSuchPage',
     vars: (m) => ({ pages: m[1], page: m[2] }),
+  },
+  {
+    /* "This file is larger than the 200 MB upload limit."
+
+       The number comes from MAX_UPLOAD_MB, which the owner sets in .env,
+       so it is read out of the message rather than repeated over here
+       where it would go stale the first time that value changed. */
+    test: /^This file is larger than the (\d+) MB upload limit\.$/,
+    key: 'server.uploadTooLarge',
+    vars: (m) => ({ limit: m[1] }),
+  },
+  {
+    /* "Office documents are limited to 100 MB because they have to be
+        converted first. PDF files up to 200 MB are accepted."
+
+       Deliberately a separate key from the one above. Both are a 413 about
+       a file being too big, but this one is the only place a student is
+       told that the same file as a PDF would have gone through - which is
+       the one piece of information that lets them do something about it. */
+    test: /^Office documents are limited to (\d+) MB because they have to be converted first\. PDF files up to (\d+) MB are accepted\.$/,
+    key: 'server.convertTooLarge',
+    vars: (m) => ({ convertLimit: m[1], uploadLimit: m[2] }),
   },
 ]
 

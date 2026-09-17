@@ -104,6 +104,13 @@ export default {
     firstPageMin: 'صفحة البداية لا تقل عن 1.',
     lastPageBeforeFirst: 'صفحة النهاية لا تسبق صفحة البداية.',
     noSuchPage: 'عدد صفحات هذا المستند: {pages}، فلا توجد فيه صفحة رقم {page}.',
+
+    /* كل رقم يليه "ميجابايت" مباشرة، فلا يقع رقمان متجاورين في أي جملة. */
+    unsupportedType: 'الملفات المدعومة هي PDF وWord وPowerPoint وExcel وOpenDocument.',
+    uploadTooLarge: 'حجم هذا الملف يتجاوز حدّ الرفع البالغ {limit} ميجابايت.',
+    convertTooLarge:
+      'حدّ ملفات Office هو {convertLimit} ميجابايت لأنها تُحوَّل أولًا، أما ملفات PDF فيُقبل منها حتى {uploadLimit} ميجابايت.',
+    conversionUnavailable: 'تعذّر تحويل هذا النوع من الملفات على الخادم الآن. ارفع ملف PDF بدلًا منه.',
   },
 
   /* ========================================================================
@@ -170,7 +177,7 @@ export default {
   documents: {
     eyebrow: 'المكتبة',
     title: 'المستندات',
-    description: 'ارفع ملف PDF، وانتظر فهرسته، ثم حاوره أو حوّله إلى اختبار.',
+    description: 'ارفع مستندًا، وانتظر فهرسته، ثم حاوره أو حوّله إلى اختبار.',
 
     loading: 'جارٍ تحميل مستنداتك',
     couldNotLoad: 'تعذّر تحميل مستنداتك.',
@@ -184,7 +191,7 @@ export default {
     countOther: 'عدد المستندات: {count}',
     stillProcessing: 'قيد المعالجة: {count}',
 
-    onlyPdf: 'لا يمكن رفع غير ملفات PDF.',
+    unsupportedFile: 'لا يمكن رفع هذا النوع من الملفات.',
 
     uploadFailedTitle: 'فشل الرفع',
     uploadFailedMessage: 'فشل الرفع.',
@@ -213,11 +220,11 @@ export default {
      ======================================================================== */
 
   upload: {
-    dropHere: 'أفلت ملف PDF هنا',
+    dropHere: 'أفلت ملفًا هنا',
 
     or: 'أو',
     browse: 'تصفّح ملفاتك',
-    pdfOnly: '. ملفات PDF فقط.',
+    fileTypes: '. ملفات PDF وWord وPowerPoint وExcel وOpenDocument.',
 
     uploading: 'جارٍ الرفع',
     progress: 'تقدّم الرفع',

@@ -13,6 +13,7 @@ import {
 import { useI18n } from '../context/I18nContext'
 import { isolate } from '../lib/language'
 import { getErrorMessage } from '../lib/errors'
+import { isSupportedFile } from '../lib/uploads'
 import PageHeader from '../components/PageHeader'
 import UploadDropzone from '../components/UploadDropzone'
 import { ChatIcon, DocumentIcon } from '../components/icons'
@@ -89,8 +90,12 @@ export default function Documents() {
   async function handleUpload(file) {
     setUploadError(null)
 
-    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-      setUploadError(t('documents.onlyPdf'))
+    /* Judged by extension alone. The browser's MIME type for an Office file
+       varies with what is installed on the machine, so it is not something
+       to refuse a student's file over - the server checks the extension too,
+       and the server is the one that decides. */
+    if (!isSupportedFile(file)) {
+      setUploadError(t('documents.unsupportedFile'))
       return
     }
 

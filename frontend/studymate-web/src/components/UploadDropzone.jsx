@@ -2,10 +2,12 @@ import { useRef, useState } from 'react'
 import { useI18n } from '../context/I18nContext'
 import { Button, cx } from './ui'
 import { UploadIcon } from './icons'
+import { UPLOAD_ACCEPT } from '../lib/uploads'
 
 /**
- * Drag-and-drop (or click / keyboard) PDF picker with an inline progress bar.
- * Purely presentational - the parent owns validation and the upload request.
+ * Drag-and-drop (or click / keyboard) document picker with an inline
+ * progress bar. Purely presentational - the parent owns validation and the
+ * upload request.
  */
 export default function UploadDropzone({ onFile, uploading, progress = 0, disabled = false }) {
   const { t } = useI18n()
@@ -45,7 +47,7 @@ export default function UploadDropzone({ onFile, uploading, progress = 0, disabl
         ref={inputRef}
         id="pdf-upload"
         type="file"
-        accept="application/pdf,.pdf"
+        accept={UPLOAD_ACCEPT}
         className="sr-only"
         disabled={disabled || uploading}
         onChange={(event) => {
@@ -74,7 +76,7 @@ export default function UploadDropzone({ onFile, uploading, progress = 0, disabl
         >
           {t('upload.browse')}
         </button>
-        {t('upload.pdfOnly')}
+        {t('upload.fileTypes')}
       </p>
 
       {uploading ? (
