@@ -4,6 +4,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 import os
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from dotenv import load_dotenv
@@ -20,6 +21,8 @@ from fastapi import (
 from contextlib import asynccontextmanager
 
 from fastapi.security import OAuth2PasswordRequestForm
+
+from sqlalchemy import func
 
 from sqlalchemy.orm import Session
 
@@ -41,7 +44,10 @@ from .models import (
     Quiz,
     QuizQuestion,
     QuizAttempt,
+    ContactMessage,
 )
+
+from .email_service import send_contact_email
 
 from .auth import (
     hash_password,
@@ -411,6 +417,90 @@ class QuizQuestionResponse(BaseModel):
     question_type: str
     options: dict | list | None
     source_page: int | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# =========================================================
+# CONTACT RULES
+# =========================================================
+
+# The shortest message worth sending on.
+#
+# 10 characters after trimming. Below that there is nothing to
+# reply to - "hi", "test", a stray keypress on a form somebody
+# tabbed into - and every one of those costs the owner an
+# email she has to open before she can see there is nothing in
+# it. It is deliberately low enough that a real short message
+# in either language gets through: "لا يعمل" is 7 and would be
+# refused, "الرفع لا يعمل" is 13 and is not, which is about
+# where the line belongs.
+MIN_CONTACT_MESSAGE_LENGTH = 10
+
+# The longest.
+#
+# 5000 characters is several screens of writing and far past
+# anything a form like this receives. It is here so that the
+# column, the email body and the owner's inbox all have a bound
+# somebody chose, rather than whatever a paste of a whole PDF
+# happens to be.
+MAX_CONTACT_MESSAGE_LENGTH = 5000
+
+# How many messages one account may send in an hour.
+#
+# This guards against a double-clicked Send button and against
+# somebody angry enough to press it twenty times - not against
+# an attacker, who would simply register more accounts. It does
+# not need to: every sender here is a real signed-in account,
+# which is what makes the form safe without any spam machinery.
+#
+# 5 an hour is generous for the honest case. A student writing
+# about one problem sends one message, and needing a second and
+# a third because they remembered something is normal; needing
+# a sixth within the hour is not.
+MAX_CONTACT_MESSAGES_PER_HOUR = 5
+
+CONTACT_RATE_LIMIT_WINDOW = timedelta(hours=1)
+
+
+# =========================================================
+# CONTACT SCHEMAS
+# =========================================================
+
+
+class ContactRequest(BaseModel):
+    """
+    The one field the student fills in.
+
+    The name and the email are not here, and a client that
+    sends them anyway is ignored: they are read off
+    current_user, so neither can be forged and the message can
+    never claim to come from an account it did not come from.
+
+    No min_length or max_length on purpose, the same decision
+    RegisterRequest documents. Those are Field constraints, and
+    a Field constraint answers with a 422 and a nested error
+    body while the rest of this API answers bad input with a
+    400 and one sentence the student can read.
+    """
+
+    message: str
+
+
+class ContactResponse(BaseModel):
+    """
+    The id of the stored message, and nothing else.
+
+    Deliberately not email_sent. Whether the notification went
+    out is not the student's problem and not something they can
+    do anything about - their message was received the moment
+    the row was committed, and telling them otherwise would be
+    reporting our delivery trouble as their failure. The two
+    email columns are for the owner, who reads them with the
+    query in the feature's notes.
+    """
+
+    id: UUID
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -2963,3 +3053,172 @@ def delete_quiz(
     return {
         "message": "Quiz deleted successfully"
     }
+
+
+# =========================================================
+# CONTACT - SEND A MESSAGE
+# =========================================================
+
+@app.post(
+    "/contact",
+    response_model=ContactResponse,
+    status_code=201,
+)
+def send_contact_message(
+    contact_data: ContactRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Store a message from a signed-in student, then queue an
+    email about it.
+
+    THE ORDER IS THE DESIGN. The row is written and committed
+    first and the request succeeds there; the email is a
+    notification queued afterwards. Email delivery cannot be
+    verified and cannot be relied on, so the database row is
+    the record - a message whose email never goes out has
+    still been received, and email_sent and email_error are
+    how that failure leaves a trace instead of vanishing.
+
+    Signed-in students only, which is what makes this safe
+    without a CAPTCHA or a honeypot or any other spam
+    machinery. The sender is a real account: the name and the
+    address come from current_user rather than from the form,
+    and neither can be forged.
+    """
+
+    # -----------------------------------------------------
+    # The message itself
+    # -----------------------------------------------------
+    #
+    # Trimmed first and then measured, so that a screenful of
+    # spaces is an empty message rather than a long one, and
+    # so the length rule is about what was actually written.
+    # The trimmed text is what is stored, too: the leading
+    # newlines a paste brings with it are not content.
+
+    message = contact_data.message.strip()
+
+    if not message:
+        raise HTTPException(
+            status_code=400,
+            detail="Please write a message before sending.",
+        )
+
+    # len() over the Python string, which counts characters
+    # and not bytes. An Arabic message is the same length here
+    # as the student sees it; counting bytes would make the
+    # same sentence roughly twice as long in Arabic as in
+    # English and quietly hold Arabic to a shorter limit.
+    if len(message) < MIN_CONTACT_MESSAGE_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"A message must be at least "
+                f"{MIN_CONTACT_MESSAGE_LENGTH} characters long."
+            ),
+        )
+
+    if len(message) > MAX_CONTACT_MESSAGE_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"A message cannot be longer than "
+                f"{MAX_CONTACT_MESSAGE_LENGTH} characters."
+            ),
+        )
+
+    # -----------------------------------------------------
+    # The rate limit
+    # -----------------------------------------------------
+    #
+    # A COUNT over this account's rows in the last hour, and
+    # nothing else: no package, and no counter held in memory.
+    # An in-memory counter would be reset by every restart and
+    # would be wrong the moment the app ran as more than one
+    # process, while the rows are already there and are the
+    # same rows whoever is asking.
+    #
+    # datetime.now(timezone.utc) rather than a naive now():
+    # created_at is DateTime(timezone=True), and comparing an
+    # aware column against a naive value is the kind of
+    # mistake that works perfectly on a machine whose clock
+    # happens to be set to UTC.
+
+    window_start = (
+        datetime.now(timezone.utc)
+        - CONTACT_RATE_LIMIT_WINDOW
+    )
+
+    recent_message_count = (
+        db.query(func.count(ContactMessage.id))
+        .filter(
+            ContactMessage.user_id == current_user.id,
+            ContactMessage.created_at >= window_start,
+        )
+        .scalar()
+    )
+
+    if recent_message_count >= MAX_CONTACT_MESSAGES_PER_HOUR:
+
+        # 429, and no row. A refused message is not a stored
+        # message - counting it would mean the limit tightened
+        # itself every time somebody hit it.
+        #
+        # The number is not in the sentence. The student needs
+        # to know to wait, not to know where the line is, and
+        # a number written here would be a second place for
+        # MAX_CONTACT_MESSAGES_PER_HOUR to live and go stale.
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "You have sent several messages in the last "
+                "hour. Please wait a while before sending "
+                "another."
+            ),
+        )
+
+    # -----------------------------------------------------
+    # Store it - this is the part that matters
+    # -----------------------------------------------------
+    #
+    # Committed before anything is queued. After this line the
+    # message exists whatever happens next, and everything
+    # below is a notification about a record that is already
+    # safe.
+    #
+    # user_id and nothing else about the student: the name and
+    # the address stay on the user row and are joined to when
+    # the email is built.
+
+    contact_message = ContactMessage(
+        user_id=current_user.id,
+        message=message,
+    )
+
+    db.add(contact_message)
+    db.commit()
+    db.refresh(contact_message)
+
+    # -----------------------------------------------------
+    # Then tell somebody
+    # -----------------------------------------------------
+    #
+    # The same BackgroundTasks the upload endpoint uses, and
+    # the id alone for the same reason: the task runs after
+    # the response has gone out and opens its own session.
+    #
+    # A background task rather than an inline send, because an
+    # SMTP handshake is a network round trip to Gmail and the
+    # student would otherwise sit and watch a spinner for it -
+    # waiting on something that has no bearing on whether
+    # their message was received.
+
+    background_tasks.add_task(
+        send_contact_email,
+        contact_message.id,
+    )
+
+    return contact_message

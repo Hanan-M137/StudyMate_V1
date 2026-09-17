@@ -11,6 +11,7 @@ import ConversationDetail from './pages/ConversationDetail'
 import Quizzes from './pages/Quizzes'
 import QuizTake from './pages/QuizTake'
 import Settings from './pages/Settings'
+import Contact from './pages/Contact'
 import NotFound from './pages/NotFound'
 
 export default function App() {
@@ -30,6 +31,10 @@ export default function App() {
             <Route path="/quizzes" element={<Quizzes />} />
             <Route path="/quizzes/:quizId" element={<QuizTake />} />
             <Route path="/settings" element={<Settings />} />
+            {/* Inside ProtectedRoute like every other route in the shell:
+                the endpoint behind it requires an account, and the form
+                fills its name and email in from one. */}
+            <Route path="/contact" element={<Contact />} />
             <Route path="*" element={<NotFound />} />
           </Route>
         </Route>

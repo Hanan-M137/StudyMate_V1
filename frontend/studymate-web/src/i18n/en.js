@@ -131,6 +131,21 @@ export default {
       'Office documents are limited to {convertLimit} MB because they have to be converted first. PDF files up to {uploadLimit} MB are accepted.',
     conversionUnavailable:
       'This file type cannot be converted on the server right now. Please upload a PDF instead.',
+
+    /* The contact form's four refusals. The two lengths carry their
+       number because the number lives in main.py - MIN_CONTACT_MESSAGE_LENGTH
+       and MAX_CONTACT_MESSAGE_LENGTH - and is read back out of the
+       message rather than repeated over here where it would go stale
+       the first time either constant moved.
+
+       The rate limit names no number at all, because the server's
+       sentence does not either: a student who has hit it needs to know
+       to wait, not where the line is. */
+    contactEmpty: 'Please write a message before sending.',
+    contactTooShort: 'A message must be at least {min} characters long.',
+    contactTooLong: 'A message cannot be longer than {max} characters.',
+    contactRateLimited:
+      'You have sent several messages in the last hour. Please wait a while before sending another.',
   },
 
   /* ========================================================================
@@ -151,6 +166,11 @@ export default {
     closeMenu: 'Close menu',
 
     settings: 'Settings',
+
+    /* The entry beside Settings, and the same kind of word: it names
+       where the link goes. The page heading below is a different key
+       because it is a title rather than a signpost. */
+    contact: 'Contact us',
 
     /* Shown in the user panel when neither a name nor an email has arrived
        yet - it says the session exists, not who it belongs to. */
@@ -738,6 +758,44 @@ export default {
     passwordChanged:
       'Password changed. Any other device signed in to this account has been signed out.',
     couldNotChangePassword: 'Could not change your password.',
+  },
+
+  /* ========================================================================
+     contact - the contact form
+     ======================================================================== */
+
+  contact: {
+    /* The page title, not the sidebar link. nav.contact is the signpost
+       and this is the heading it leads to; a language that shortens one
+       will not want the other shortened with it. */
+    title: 'Contact us',
+
+    /* Says what the form is for and, just as importantly, what it is
+       not: there is no promise of a reply time anywhere in this section,
+       because that is a promise the app cannot keep. */
+    subtitle: 'Tell us about a problem, or about something that should work differently.',
+
+    /* The two read-only fields. They say "your", because the value is
+       the student's own account detail rather than something they are
+       being asked for. */
+    fullName: 'Your name',
+    email: 'Your email',
+
+    /* Under the pair of them, explaining why they cannot be typed in.
+       A read-only field with no explanation reads as a broken field. */
+    fromAccountHint: 'Taken from your account, so we know who wrote and where to reply.',
+
+    message: 'Message',
+    messagePlaceholder: 'What happened, and what you expected instead.',
+
+    send: 'Send message',
+
+    /* Confirms that the message was received - which is exactly what
+       has been confirmed, because the row is stored before any email is
+       attempted. It says nothing about when anyone will answer. */
+    sent: 'Your message has been received. Thank you.',
+
+    couldNotSend: 'Could not send your message.',
   },
 
   /* ========================================================================

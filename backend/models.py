@@ -90,6 +90,12 @@ class User(Base):
         cascade="all, delete-orphan",
     )
 
+    contact_messages = relationship(
+        "ContactMessage",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
 
 # =========================================================
 # DOCUMENT MODEL
@@ -581,4 +587,83 @@ class QuizAttempt(Base):
     user = relationship(
         "User",
         back_populates="quiz_attempts",
+    )
+
+
+# =========================================================
+# CONTACT MESSAGE MODEL
+# =========================================================
+
+class ContactMessage(Base):
+    """
+    One message a signed-in student sent through the contact form.
+
+    The row is the record and the email is a convenience. The
+    endpoint writes this row and commits before it queues any
+    notification, so a message whose email never goes out still
+    exists and can still be read.
+
+    The sender's name and address are deliberately NOT columns
+    here. They live on the user row, this table joins to it, and
+    a student who later corrects their name corrects it on every
+    message they have ever sent rather than on none of them.
+    """
+
+    __tablename__ = "contact_messages"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "users.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    message = Column(
+        Text,
+        nullable=False,
+    )
+
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    # The two columns that make "stored first" worth anything.
+    #
+    # Without them a delivery failure would be invisible: the
+    # student would be told the message was received, the row
+    # would be there, and nobody would ever learn that the
+    # notification did not arrive. email_sent stays False and
+    # email_error holds the exception text, so the failures can
+    # be listed with one query and answered by hand.
+    #
+    # email_error is nullable because the ordinary case is that
+    # there is no error, and because a message whose email has
+    # not been attempted yet is not a message that failed.
+    email_sent = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+
+    email_error = Column(
+        Text,
+        nullable=True,
+    )
+
+    # Relationship
+    user = relationship(
+        "User",
+        back_populates="contact_messages",
     )

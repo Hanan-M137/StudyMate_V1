@@ -16,6 +16,8 @@
      - a wrong current password when changing it
      - the quiz form's validation: question count, question types,
        and the page range
+     - the contact form's refusals: an empty message, one that is too
+       short or too long, and too many messages in one hour
 
    Everything else main.py can say is deliberately left alone and reaches the
    student in English. Those are the messages the interface either prevents
@@ -63,6 +65,17 @@ const EXACT = {
     'server.conversionUnavailable',
 
   'Current password is incorrect': 'server.currentPasswordIncorrect',
+
+  /* SOURCE: the /contact endpoint in backend/main.py.
+
+     An empty message, and the 429 when one account has sent too many in
+     an hour. Neither sentence carries a number - the rate limit's own
+     wording deliberately does not name the limit - so both match whole.
+     The two length refusals do carry one and are down in PATTERNS. */
+  'Please write a message before sending.': 'server.contactEmpty',
+
+  'You have sent several messages in the last hour. Please wait a while before sending another.':
+    'server.contactRateLimited',
 
   'num_questions must be at least 1': 'server.numQuestionsMin',
   'num_questions cannot exceed 50': 'server.numQuestionsMax',
@@ -114,6 +127,24 @@ const PATTERNS = [
     test: /^Office documents are limited to (\d+) MB because they have to be converted first\. PDF files up to (\d+) MB are accepted\.$/,
     key: 'server.convertTooLarge',
     vars: (m) => ({ convertLimit: m[1], uploadLimit: m[2] }),
+  },
+  {
+    /* "A message must be at least 10 characters long."
+
+       SOURCE: the /contact endpoint in backend/main.py. The number is
+       MIN_CONTACT_MESSAGE_LENGTH, which lives over there, so it is read
+       out of the message rather than written again here - the same
+       reason the upload limits above are matched by shape. */
+    test: /^A message must be at least (\d+) characters long\.$/,
+    key: 'server.contactTooShort',
+    vars: (m) => ({ min: m[1] }),
+  },
+  {
+    /* "A message cannot be longer than 5000 characters."
+       MAX_CONTACT_MESSAGE_LENGTH, read out for the same reason. */
+    test: /^A message cannot be longer than (\d+) characters\.$/,
+    key: 'server.contactTooLong',
+    vars: (m) => ({ max: m[1] }),
   },
 ]
 

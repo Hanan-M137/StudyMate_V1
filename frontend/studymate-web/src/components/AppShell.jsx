@@ -9,6 +9,7 @@ import {
   CloseIcon,
   DocumentIcon,
   LogoutIcon,
+  MailIcon,
   MenuIcon,
   QuizIcon,
   SettingsIcon,
@@ -42,6 +43,10 @@ export default function AppShell() {
 
   function handleSettings() {
     navigate('/settings')
+  }
+
+  function handleContact() {
+    navigate('/contact')
   }
 
   return (
@@ -99,6 +104,7 @@ export default function AppShell() {
               displayName={displayName}
               email={email}
               onSettings={handleSettings}
+              onContact={handleContact}
               onLogout={handleLogout}
             />
           </nav>
@@ -115,6 +121,7 @@ export default function AppShell() {
           displayName={displayName}
           email={email}
           onSettings={handleSettings}
+          onContact={handleContact}
           onLogout={handleLogout}
         />
       </aside>
@@ -189,7 +196,7 @@ function NavLinks() {
   )
 }
 
-function UserPanel({ displayName, email, onSettings, onLogout }) {
+function UserPanel({ displayName, email, onSettings, onContact, onLogout }) {
   const { t } = useI18n()
 
   const label = displayName || email || t('nav.signedIn')
@@ -230,6 +237,22 @@ function UserPanel({ displayName, email, onSettings, onLogout }) {
         <SettingsIcon className="h-4 w-4" />
         {t('nav.settings')}
       </Button>
+
+      {/* Beside Settings and styled the same, because it is the same kind of
+          entry: a place in the app that is about the account rather than
+          about a document. `no-print` for the same reason the Settings
+          button carries it - a printed page is a quiz or a conversation,
+          and a link nobody can click has no business on it. */}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="no-print mt-1 w-full justify-start"
+        onClick={onContact}
+      >
+        <MailIcon className="h-4 w-4" />
+        {t('nav.contact')}
+      </Button>
+
       <Button variant="ghost" size="sm" className="mt-1 w-full justify-start" onClick={onLogout}>
         {/* The only icon in the sidebar that points anywhere: it shows
             something leaving, and in a right-to-left layout things leave to

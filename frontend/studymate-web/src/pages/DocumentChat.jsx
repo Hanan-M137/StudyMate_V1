@@ -5,6 +5,7 @@ import { getConversation } from '../api/conversations'
 import { sendChatMessage } from '../api/chat'
 import { useI18n } from '../context/I18nContext'
 import { getErrorMessage } from '../lib/errors'
+import { contentDir } from '../lib/language'
 import SourceList from '../components/SourceList'
 import VoiceInput from '../components/VoiceInput'
 import { ChatIcon, SparkIcon } from '../components/icons'
@@ -33,7 +34,7 @@ function prefersReducedMotion() {
 
 export default function DocumentChat() {
   const { id: documentId } = useParams()
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
 
   /* A ?conversation= parameter means an existing thread is being reopened from
      the conversations list. Without it this page starts a new thread, which is
@@ -297,11 +298,19 @@ export default function DocumentChat() {
           {t('chat.inputLabel')}
         </label>
         {/* The question is the student's own writing, in whichever
-            language they are reading the document in. */}
+            language they are reading the document in.
+
+            Not a fixed dir="auto", because that reads the value and ignores
+            the placeholder: this box is empty on every page load and again
+            after every message sent, so in the Arabic interface it would
+            start left-to-right and render the Arabic placeholder with its
+            full stop at the wrong end. contentDir follows the interface
+            language while the box is empty and hands over to "auto" at the
+            first character. */}
         <Input
           id="chat-input"
           ref={inputRef}
-          dir="auto"
+          dir={contentDir(draft, lang)}
           className="min-w-0 flex-1"
           value={draft}
           disabled={!ready || sending || resuming}

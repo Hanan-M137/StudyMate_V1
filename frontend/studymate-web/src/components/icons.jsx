@@ -140,6 +140,21 @@ export function SettingsIcon(props) {
   )
 }
 
+/** An envelope, for the contact entry under the account row.
+
+    No direction in it, so nothing is mirrored in a right-to-left
+    layout - the flap is symmetrical and the same shape read either
+    way, like the document, chat and quiz icons and unlike the
+    logout arrow beside it. */
+export function MailIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="2.5" y="4.5" width="15" height="11" rx="1.5" />
+      <path d="m2.9 5.4 6.2 4.7a1.5 1.5 0 0 0 1.8 0l6.2-4.7" />
+    </svg>
+  )
+}
+
 /** An upward arrow, for the back-to-top button. */
 export function ArrowUpIcon(props) {
   return (

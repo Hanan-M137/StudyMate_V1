@@ -126,6 +126,39 @@ export function isolate(value) {
 }
 
 /* ==========================================================================
+   The direction of a field the student types into
+   ========================================================================== */
+
+/**
+ * What to put in a text field's `dir`, given what is currently in it.
+ *
+ * `dir="auto"` resolves from the element's VALUE and ignores its
+ * placeholder. So an empty field is a field with no strong character in it,
+ * the browser falls back to left-to-right, and an Arabic placeholder in an
+ * Arabic interface renders left-aligned with its full stop at the wrong
+ * end - the field looks broken until the first keystroke silently fixes it.
+ *
+ * While the field is empty there is no content to read the direction from,
+ * so the interface language is the best answer available: an empty box in an
+ * Arabic interface should look like the rest of the Arabic page.
+ *
+ * The moment there IS content, 'auto' has to take over, and this returns it.
+ * Pinning the direction to the interface language permanently would break
+ * the student typing an English sentence into the Arabic interface - which
+ * is precisely the case `dir="auto"` exists for, and the one the i18n batch
+ * settled. The interface language is a stand-in for an answer we do not have
+ * yet, never a replacement for the one we do.
+ *
+ * @param value  the field's current value
+ * @param lang   the interface language, from useI18n()
+ */
+export function contentDir(value, lang) {
+  if (typeof value === 'string' && value !== '') return 'auto'
+
+  return lang === 'ar' ? 'rtl' : 'ltr'
+}
+
+/* ==========================================================================
    Dates
    ========================================================================== */
 
