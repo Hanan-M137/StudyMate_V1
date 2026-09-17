@@ -171,6 +171,35 @@ export default {
   },
 
   /* ========================================================================
+     intro
+     ======================================================================== */
+
+  intro: {
+    /* A verbal noun, as a heading takes: "حول" and not "تعرّف على". */
+    heading: 'حول StudyMate',
+
+    comingSoon: 'جولة مصوّرة قصيرة في StudyMate في الطريق.',
+
+    caption: 'يعرض الفيديو رفع مستند، وسؤاله، ثم تحويله إلى اختبار.',
+
+    /* THE REASON THIS KEY EXISTS. There is one video and it is in English,
+       and it is shown here too. A student who presses play expecting Arabic
+       and hears English was let down by the interface rather than by the
+       video, so the interface says so first - in the placeholder state as
+       well, before the file is even there.
+
+       The English side says the same thing rather than nothing, because a
+       key that renders in one language only is a key that stops being
+       maintained in the other. When an Arabic recording exists, it becomes
+       a path in lib/media.js and this sentence is what changes with it. */
+    languageNote: 'الفيديو باللغة الإنجليزية.',
+
+    videoLabel: 'فيديو تعريفي عن StudyMate',
+
+    unsupported: 'لا يستطيع متصفحك تشغيل هذا الفيديو.',
+  },
+
+  /* ========================================================================
      documents
      ======================================================================== */
 

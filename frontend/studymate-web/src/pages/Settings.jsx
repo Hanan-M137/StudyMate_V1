@@ -11,6 +11,7 @@ import {
 } from '../lib/password'
 import { LANGUAGES, isolate } from '../lib/language'
 import { THEMES, getStoredTheme, setTheme, watchSystemTheme } from '../lib/theme'
+import IntroVideo from '../components/IntroVideo'
 import {
   Button,
   Card,
@@ -22,11 +23,13 @@ import {
 } from '../components/ui'
 
 /* ==========================================================================
-   Settings - appearance and account.
+   Settings - appearance, account, and what StudyMate is.
 
-   Two sections and no more. Everything here either works completely or is
+   Three sections and no more. Everything here either works completely or is
    not on the page: a control that does nothing is worse than no control,
-   because it makes a promise the app cannot keep.
+   because it makes a promise the app cannot keep. The third section holds no
+   control at all - it is the intro video, which is the same card the
+   sign-in page shows and is rendered, heading and all, by the component.
    ========================================================================== */
 
 /* Keys rather than words: THEMES is a list of values from lib/theme.js and
@@ -66,6 +69,13 @@ export default function Settings() {
 
       <AppearanceSection />
       <AccountSection />
+
+      {/* Last, and a section like the two above it: the space-y-6 on the
+          wrapper gives it the same gap, and IntroVideo renders the same
+          Card / CardHeader / CardBody the other two are built from. There
+          is nothing to configure here, which is why it comes after the two
+          sections that do something. */}
+      <IntroVideo />
     </div>
   )
 }

@@ -196,6 +196,41 @@ export default {
   },
 
   /* ========================================================================
+     intro - the video card on the sign-in, registration and settings pages
+
+     One area rather than three, because it is one card rendered in three
+     places. The heading is the settings section's heading as well: the
+     component carries it, so the page never writes it twice.
+     ======================================================================== */
+
+  intro: {
+    heading: 'About StudyMate',
+
+    /* Shown while lib/media.js still holds null, which is the state the app
+       ships in. A sentence rather than an empty frame - there is nothing
+       broken to apologise for, only something not written yet. */
+    comingSoon: 'A short video tour of StudyMate is on its way.',
+
+    /* The sentence under the player, once there is one: what the video
+       shows, so nobody has to press play to find out. */
+    caption:
+      'The video walks through uploading a document, asking it questions, and turning it into a quiz.',
+
+    /* There is one video and it is in English, in both interfaces. Saying
+       so is the whole point of this key - see the note beside it in ar.js,
+       which is where it does its work. */
+    languageNote: 'The video is in English.',
+
+    /* The player's accessible name. A heading sits above it, but a heading
+       is not what names a media element to a screen reader. */
+    videoLabel: 'StudyMate intro video',
+
+    /* Between the <video> tags: only a browser that cannot play the file at
+       all ever reaches it. */
+    unsupported: 'Your browser cannot play this video.',
+  },
+
+  /* ========================================================================
      documents - the library page, and the status words the chat page reuses
      ======================================================================== */
 
