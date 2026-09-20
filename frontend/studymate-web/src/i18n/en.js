@@ -226,7 +226,7 @@ export default {
 
     createAccount: 'Create account',
     createAccountTitle: 'Create your account',
-    createAccountSubtitle: 'Register, then upload your first PDF.',
+    createAccountSubtitle: 'Register, then upload your first file.',
     alreadyRegistered: 'Already registered?',
     couldNotCreateAccount: 'Could not create the account.',
 
@@ -263,7 +263,7 @@ export default {
     couldNotVerify: 'Could not verify the code.',
     couldNotResend: 'Could not send a new code.',
 
-    pitchTitle: 'Upload your course PDFs, then ask them questions.',
+    pitchTitle: 'Upload your course files, then ask them questions.',
     pitchBody:
       'Every answer is grounded in your own material and cites the page it came from. Turn any document into a quiz when it is time to revise.',
     pitchFooter: 'AI study assistant for university students',
@@ -287,13 +287,12 @@ export default {
 
     /* The sentence under the player, once there is one: what the video
        shows, so nobody has to press play to find out. */
-    caption:
-      'The video walks through uploading a document, asking it questions, and turning it into a quiz.',
+    
 
     /* There is one video and it is in English, in both interfaces. Saying
        so is the whole point of this key - see the note beside it in ar.js,
        which is where it does its work. */
-    languageNote: 'The video is in English.',
+    
 
     /* The player's accessible name. A heading sits above it, but a heading
        is not what names a media element to a screen reader. */

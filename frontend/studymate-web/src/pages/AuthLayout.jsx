@@ -36,12 +36,14 @@ export default function AuthLayout({ title, subtitle, children, footer }) {
           <span className="font-display text-lg font-semibold">StudyMate</span>
         </Link>
 
-        <div className="measure">
+        <div className="measure translate-y-2">
           <p className="font-display text-3xl leading-tight">{t('auth.pitchTitle')}</p>
           <p className="mt-4 text-sm leading-relaxed text-on-accent/80">{t('auth.pitchBody')}</p>
         </div>
 
-        <p className="type-micro text-on-accent/60">{t('auth.pitchFooter')}</p>
+        <p className="type-micro translate-y-2 text-on-accent/60">
+          {t('auth.pitchFooter')}
+        </p>
       </aside>
 
       <main className="flex min-h-screen items-center justify-center px-4 py-12 sm:px-8 lg:row-span-2">

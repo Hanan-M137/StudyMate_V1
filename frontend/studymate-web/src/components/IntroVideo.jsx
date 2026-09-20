@@ -42,7 +42,7 @@ export default function IntroVideo() {
             the video exists knows what to expect when it arrives. In the
             Arabic interface this is the sentence that says the video is in
             English - see the note on the key in ar.js. */}
-        <p className="type-small text-muted">{t('intro.languageNote')}</p>
+        
       </CardBody>
     </Card>
   )
@@ -97,7 +97,7 @@ function Player() {
         {t('intro.unsupported')}
       </video>
 
-      <p className="type-small text-muted">{t('intro.caption')}</p>
+      
     </div>
   )
 }
