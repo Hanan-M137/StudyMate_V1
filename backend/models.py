@@ -54,6 +54,26 @@ class User(Base):
         server_default=func.now(),
     )
 
+    # Whether this address has been proved to belong to whoever
+    # registered it, by entering the code that was emailed to it.
+    #
+    # default=False applies to NEW ROWS ONLY. Every account that
+    # existed before this column did is set to true by hand, with
+    # the UPDATE that runs beside the ALTER - see the feature's
+    # notes. Without that UPDATE every existing account would be
+    # refused at login the moment verification was switched on,
+    # including the test accounts on domains that will never
+    # receive an email.
+    #
+    # The column does nothing at all while
+    # REQUIRE_EMAIL_VERIFICATION is off: login does not read it
+    # and registration does not set it to anything else.
+    email_verified = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
     # Every token carries the value this had when it was issued.
     # Signing out increases it, so every token minted before that
     # moment stops being accepted - on this device and on every
@@ -92,6 +112,12 @@ class User(Base):
 
     contact_messages = relationship(
         "ContactMessage",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+    email_verifications = relationship(
+        "EmailVerification",
         back_populates="user",
         cascade="all, delete-orphan",
     )
@@ -666,4 +692,108 @@ class ContactMessage(Base):
     user = relationship(
         "User",
         back_populates="contact_messages",
+    )
+
+
+# =========================================================
+# EMAIL VERIFICATION MODEL
+# =========================================================
+
+class EmailVerification(Base):
+    """
+    One six-digit code that was emailed to one account.
+
+    A row per code issued rather than a column on the user row,
+    because a code has a life of its own: it expires, it can be
+    guessed at a bounded number of times, it is replaced when the
+    student asks for a new one, and it is spent once it works.
+    None of that fits in a column beside the password hash, and a
+    row is also what lets the resend limit be a COUNT over the
+    last hour the way the contact form's limit is.
+
+    THE CODE ITSELF IS NOT HERE. Only its bcrypt hash is. The
+    code is short-lived and worth little, but a database dump
+    should not hand out working codes for accounts that have not
+    been claimed yet, and hash_password was already in the
+    project - so storing the hash cost nothing and storing the
+    code would have been a decision to keep a secret in the
+    clear.
+    """
+
+    __tablename__ = "email_verifications"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    # Indexed, because every read of this table is "the newest
+    # row for this user" and every one of them happens while
+    # somebody is waiting on a sign-in screen.
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "users.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    code_hash = Column(
+        String(255),
+        nullable=False,
+    )
+
+    # Fifteen minutes after the row is written - see
+    # VERIFICATION_CODE_MINUTES in backend/email_service.py,
+    # which is also the number the email tells the student.
+    #
+    # timezone=True like every other timestamp in this file, so
+    # the comparison against datetime.now(timezone.utc) is
+    # between two aware values. Comparing an aware column with a
+    # naive now() is the kind of mistake that works perfectly on
+    # a machine whose clock happens to be set to UTC.
+    expires_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    # How many times a code has been offered for this row.
+    #
+    # This is what makes a six-digit code safe. One guess in a
+    # million is only long odds if the number of guesses is
+    # bounded; without this column an attacker with a script
+    # would walk through the range in an afternoon.
+    attempts = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+
+    # When the code was spent, or killed.
+    #
+    # Nullable because the ordinary state of a fresh code is that
+    # it has not been used. It is set on success, so a code that
+    # worked cannot work twice; it is also set when the attempt
+    # limit is passed and when a resend replaces the code, which
+    # is how "invalidate the outstanding code" is written without
+    # deleting the row somebody may later want to look at.
+    used_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    # Relationship
+    user = relationship(
+        "User",
+        back_populates="email_verifications",
     )

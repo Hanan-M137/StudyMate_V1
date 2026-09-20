@@ -104,10 +104,43 @@ export function AuthProvider({ children }) {
     [loadUser],
   )
 
+  /* Entering the emailed code is the other way into a session.
+
+     It lives here beside login() rather than in the page, because what
+     happens after the tokens arrive is identical: store them, show the
+     email straight away so the sidebar is not blank, then let loadUser
+     replace it with the server's copy. A page that did its own setTokens
+     would be a second sign-in path for the rest of the app to disagree
+     with.
+
+     The email is the one the student typed on the form before this, which
+     is also the address the code went to - so it is the same placeholder
+     login() writes, for the same reason. */
+
+  const verifyEmail = useCallback(
+    async ({ email: address, code }) => {
+      const tokens = await authApi.verifyEmail({ email: address, code })
+      setTokens(tokens)
+
+      writeStored(EMAIL_KEY, address)
+      setEmail(address)
+      setIsAuthenticated(true)
+
+      await loadUser().catch(() => {
+        /* Verifying succeeded. A failure to read the profile leaves the
+           email on screen rather than undoing a good session. */
+      })
+
+      return tokens
+    },
+    [loadUser],
+  )
+
   /* Registering does not sign anyone in - it returns a confirmation message
-     and no tokens, and Register.jsx calls login() straight afterwards, which
-     is what actually fills the name in. The guarded call is here for the case
-     where an account is created from an already-signed-in session. */
+     and no tokens, and Register.jsx either calls login() straight afterwards
+     or, when the server asked for a verification code, shows the code field
+     and finishes through verifyEmail() above. The guarded call is here for
+     the case where an account is created from an already-signed-in session. */
   const register = useCallback(
     async (payload) => {
       const result = await authApi.register(payload)
@@ -171,10 +204,20 @@ export function AuthProvider({ children }) {
       displayName: fullName || email,
       login,
       register,
+      verifyEmail,
       logout,
       applyProfile,
     }),
-    [isAuthenticated, email, fullName, login, register, logout, applyProfile],
+    [
+      isAuthenticated,
+      email,
+      fullName,
+      login,
+      register,
+      verifyEmail,
+      logout,
+      applyProfile,
+    ],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

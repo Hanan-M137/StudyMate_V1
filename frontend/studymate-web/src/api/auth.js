@@ -98,3 +98,45 @@ export async function changePassword({ currentPassword, newPassword }) {
   })
   return data
 }
+
+/**
+ * POST /auth/verify-email - JSON { email, code } -> TokenResponse.
+ *
+ * The call that ends registration. It answers with the same token pair
+ * /auth/login answers with, so the student is signed in by the act of
+ * proving the address is theirs and never meets a sign-in form in between.
+ *
+ * Plain axios rather than `client`, exactly like login() above: there is no
+ * session yet, the call carries no Authorization header, and a 400 from it
+ * must not be dragged through the 401 refresh interceptor.
+ *
+ * EVERY FAILURE IS THE SAME 400 with the same sentence - wrong code,
+ * expired, already used, too many guesses, no such account. That is the
+ * server being careful rather than being unhelpful, and the interface must
+ * not try to guess which of them happened.
+ */
+export async function verifyEmail({ email, code }) {
+  const { data } = await axios.post(`${API_BASE_URL}/auth/verify-email`, {
+    email,
+    code,
+  })
+  return data
+}
+
+/**
+ * POST /auth/resend-verification - JSON { email } -> { message }
+ *
+ * ALWAYS ANSWERS 200, whether or not that address has an account. Nothing
+ * in the response says which, and the interface must not pretend to know:
+ * the confirmation it shows is "if that address needs verifying, a code is
+ * on its way", never "we sent it".
+ *
+ * The one refusal is a 429 once too many codes have been asked for in an
+ * hour, which lib/serverErrors.js translates.
+ */
+export async function resendVerification({ email }) {
+  const { data } = await axios.post(`${API_BASE_URL}/auth/resend-verification`, {
+    email,
+  })
+  return data
+}

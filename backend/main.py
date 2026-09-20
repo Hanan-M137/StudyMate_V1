@@ -4,6 +4,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -16,6 +17,7 @@ from fastapi import (
     UploadFile,
     File,
     BackgroundTasks,
+    Response,
 )
 
 from contextlib import asynccontextmanager
@@ -45,9 +47,15 @@ from .models import (
     QuizQuestion,
     QuizAttempt,
     ContactMessage,
+    EmailVerification,
 )
 
-from .email_service import send_contact_email
+from .email_service import (
+    VERIFICATION_CODE_MINUTES,
+    send_contact_email,
+    send_verification_email,
+    smtp_is_configured,
+)
 
 from .auth import (
     hash_password,
@@ -105,6 +113,27 @@ load_dotenv()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+
+    # Said once, loudly, at the only moment somebody is watching
+    # the console: the owner asked for verification and this
+    # machine cannot deliver a code, so the feature has turned
+    # itself off. Without this the app would look exactly like a
+    # server with the switch set to false, and the reason would
+    # only surface the day somebody wondered why no code arrived.
+    #
+    # It is a warning and not a refusal to start. Refusing would
+    # take the whole app down over a feature that is allowed to
+    # be off, which is the opposite of what this guard is for.
+    if _verification_is_switched_on() and not smtp_is_configured():
+
+        logger.warning(
+            "REQUIRE_EMAIL_VERIFICATION is on but SMTP is not "
+            "configured, so email verification is DISABLED. "
+            "Registration and login behave as they did before "
+            "the feature existed. Set SMTP_HOST and "
+            "SMTP_PASSWORD in .env to enable it.",
+        )
+
     yield
 
 
@@ -227,6 +256,201 @@ def validate_password(password: str) -> None:
 
 
 # =========================================================
+# EMAIL VERIFICATION RULES
+# =========================================================
+
+
+def _verification_is_switched_on() -> bool:
+    """
+    What REQUIRE_EMAIL_VERIFICATION says, and nothing else.
+
+    Read from the environment on every call rather than once at
+    import, which is the whole reason this is a function. The
+    switch has to be something the owner can throw in seconds:
+    edit one line in .env, restart, and the door is open again.
+    An import-time read would still need the restart, but it
+    would also freeze the value into a module that may have been
+    imported before load_dotenv ran - and a switch that does not
+    always mean what the file says is not a switch anybody can
+    rely on at the moment they need it.
+
+    Anything that is not a recognisable "yes" counts as off, the
+    same way ENABLE_FILE_CONVERSION reads its own value: a typo
+    leaves the feature off rather than turning one on that the
+    owner never asked for.
+    """
+
+    return (
+        os.environ.get("REQUIRE_EMAIL_VERIFICATION", "false")
+        .strip()
+        .lower()
+        in {"true", "1", "yes", "on"}
+    )
+
+
+def email_verification_is_active() -> bool:
+    """
+    Whether this request should require a verified address.
+
+    THIS IS THE GUARD THAT MATTERS. Requiring a code that cannot
+    be delivered locks every new account out permanently, with no
+    way back in from inside the app - so the feature refuses to
+    be on unless mail can actually be sent, whatever the switch
+    says. There is no state this app can be left in where a
+    student is asked for a code nothing ever sent.
+
+    smtp_is_configured() is email_service.py's own check, the one
+    the send path acts on, imported rather than rewritten. A
+    second copy of it here would eventually disagree with the
+    first, and the shape of that disagreement is exactly the
+    lock-out this guard exists to prevent.
+    """
+
+    if not _verification_is_switched_on():
+        return False
+
+    if not smtp_is_configured():
+
+        # Logged at every registration, not only at startup. A
+        # server that has been up for a week is the case where
+        # the startup line has long scrolled away, and this is
+        # the line that explains why an account that should have
+        # been asked for a code was not.
+        logger.warning(
+            "REQUIRE_EMAIL_VERIFICATION is on but SMTP is not "
+            "configured; treating email verification as off. "
+            "A code that cannot be delivered would lock the "
+            "account out permanently.",
+        )
+
+        return False
+
+    return True
+
+
+# How many times one code may be offered before it is dead.
+#
+# A six-digit code is one guess in a million, which is only long
+# odds while the number of guesses is bounded - unbounded, a
+# script walks the whole range in an afternoon. Five is far more
+# than a student who is reading the code off their own screen
+# will ever need, and far fewer than a guess is worth.
+MAX_VERIFICATION_ATTEMPTS = 5
+
+# How many codes one account may be sent in an hour.
+#
+# Four, counted the way the contact form counts its messages: a
+# COUNT over the rows already in the table, not a counter held in
+# memory that a restart resets and that is wrong the moment the
+# app runs as more than one process.
+#
+# Four rather than three because registration itself issues one,
+# and it is the same kind of row. Three would mean a student
+# whose first code never arrived got two resends instead of the
+# three they were promised - and the student whose code did not
+# arrive is precisely the person this endpoint exists for.
+MAX_VERIFICATION_CODES_PER_HOUR = 4
+
+VERIFICATION_RATE_LIMIT_WINDOW = timedelta(hours=1)
+
+# Arabic-Indic and extended Arabic-Indic digits, mapped onto the
+# Latin ones the code is generated in.
+#
+# The code is emailed as 0-9 and compared as 0-9, but this app's
+# students write Arabic, and an Arabic keyboard set to Arabic
+# numerals types ٠١٢ where the email says 012. Those are the same
+# code as far as the student is concerned, and refusing one of
+# them would be refusing a correct answer over a keyboard layout.
+#
+# Written out rather than reached through unicodedata, because
+# these two ranges are the only ones a student of this app will
+# type and a twenty-character table is easier to check by eye
+# than a call whose behaviour has to be looked up.
+VERIFICATION_DIGIT_TRANSLATION = str.maketrans(
+    "٠١٢٣٤٥٦٧٨٩" "۰۱۲۳۴۵۶۷۸۹",
+    "0123456789" "0123456789",
+)
+
+
+def issue_verification_code(
+    db: Session,
+    user: User,
+) -> str:
+    """
+    Write a fresh code's row for this account and hand the plain
+    code back to the caller, who is the only other place it will
+    ever exist.
+
+    Does NOT commit. Registration commits it alongside the user
+    row it belongs to, so an account can never exist with no way
+    to claim it; the resend endpoint commits it alongside the
+    invalidation of the code it replaces.
+
+    Does not queue the email either. The email is a background
+    task, and a background task must never be queued before the
+    row it talks about is committed.
+    """
+
+    # secrets.randbelow and not random.randrange: this is a
+    # credential, briefly, and the difference between the two is
+    # whether the next code can be predicted from the last one.
+    #
+    # Zero-padded to six characters, so 42 is "000042" and every
+    # code the student is asked for looks the same length as
+    # every other. A code that is sometimes five digits would
+    # make the field's own rule a lie.
+    code = f"{secrets.randbelow(1_000_000):06d}"
+
+    verification = EmailVerification(
+        user_id=user.id,
+        # The same hashing the password uses. The code is short
+        # lived and low value, but a database dump should not
+        # hand out working codes for accounts nobody has claimed
+        # yet, and the helper was already here.
+        code_hash=hash_password(code),
+        expires_at=(
+            datetime.now(timezone.utc)
+            + timedelta(minutes=VERIFICATION_CODE_MINUTES)
+        ),
+    )
+
+    db.add(verification)
+
+    return code
+
+
+def newest_live_verification(
+    db: Session,
+    user: User,
+) -> EmailVerification | None:
+    """
+    The one code that is currently worth anything for this
+    account: the newest that has not been used and has not
+    expired.
+
+    Newest and not "any", because a resend is meant to replace
+    the code before it. The replaced rows are invalidated when
+    the new one is issued, so this ordinarily has one candidate -
+    the ordering is what keeps that true if one ever slips
+    through, rather than letting an older code outlive the one
+    the student is actually looking at.
+    """
+
+    return (
+        db.query(EmailVerification)
+        .filter(
+            EmailVerification.user_id == user.id,
+            EmailVerification.used_at.is_(None),
+            EmailVerification.expires_at > datetime.now(timezone.utc),
+        )
+        .order_by(
+            EmailVerification.created_at.desc()
+        )
+        .first()
+    )
+
+
+# =========================================================
 # PYDANTIC SCHEMAS
 # =========================================================
 
@@ -288,6 +512,55 @@ class TokenResponse(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+
+class RegisteredResponse(BaseModel):
+    """
+    What registration answers with while verification is on.
+
+    Deliberately NOT a TokenResponse. An account that has not
+    proved it owns its address is not a session yet, and handing
+    back tokens here would make the verification screen a
+    formality the student could simply navigate past.
+
+    email is echoed back because the verification screen needs it
+    for the two calls that follow - verify and resend both take
+    an address - and reading it out of the response is better
+    than the browser remembering what it typed into a form it has
+    already left.
+    """
+
+    message: str
+    user_id: str
+    email: EmailStr
+
+
+class VerifyEmailRequest(BaseModel):
+    """
+    The address and the code that was emailed to it.
+
+    No token: this call is what creates the session, so there is
+    nothing to authenticate it with yet. The code is the
+    credential, which is why it is bounded to
+    MAX_VERIFICATION_ATTEMPTS guesses.
+
+    `code` is a plain str rather than a constrained field, the
+    same decision RegisterRequest documents: a Field constraint
+    answers with a 422 and a nested error body, while this API
+    answers bad input with a 400 and one sentence.
+    """
+
+    email: EmailStr
+    code: str
+
+
+class ResendVerificationRequest(BaseModel):
+    """
+    Just the address. Whoever is asking is not signed in - that
+    is the situation this endpoint exists for.
+    """
+
+    email: EmailStr
 
 
 class DocumentResponse(BaseModel):
@@ -523,10 +796,29 @@ def home():
 @app.post("/auth/register")
 def register(
     user_data: RegisterRequest,
+    background_tasks: BackgroundTasks,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     """
     Register a new user.
+
+    TWO ENDINGS, decided by email_verification_is_active():
+
+      off - unchanged from before this feature existed. The row
+            is written, the confirmation goes back, and the
+            browser signs in with the password it already has.
+
+      on  - the row is written with email_verified False, a
+            six-digit code is stored hashed and emailed, and the
+            answer is 201 with NO TOKENS. The account exists and
+            cannot be used until the code comes back.
+
+    "Off" includes the case where the owner asked for
+    verification but SMTP cannot send - see
+    email_verification_is_active. A code nobody can deliver would
+    lock the account out for good, so the feature stands down
+    instead.
     """
 
     # First, before the table is touched at all: a password
@@ -553,20 +845,107 @@ def register(
         user_data.password
     )
 
+    # Asked once and held, rather than asked again further down.
+    # The switch is read from the environment on every call, and
+    # an .env edited between two reads inside one request would
+    # be enough to create an account that is neither verified nor
+    # asked to be.
+    verification_required = email_verification_is_active()
+
     user = User(
         email=user_data.email,
         password_hash=password_hash,
         full_name=user_data.full_name,
+
+        # True when the feature is not active, and this is
+        # deliberate rather than an oversight.
+        #
+        # An account created while verification is off was never
+        # asked to prove anything, exactly like every account
+        # that existed before this column did - and those are
+        # marked true by the UPDATE that ships with the ALTER,
+        # for exactly that reason. Leaving these false instead
+        # would mean that switching the feature on later, or
+        # simply fixing SMTP after an outage, silently locked out
+        # every account created in between. That is the failure
+        # this whole feature is built to avoid, so it is not
+        # reintroduced here.
+        #
+        # Nothing observable changes while the feature is off:
+        # login does not read this column then, and the
+        # registration response is the same one it has always
+        # been.
+        email_verified=not verification_required,
     )
 
     db.add(user)
+
+    if not verification_required:
+
+        # -------------------------------------------------
+        # The unchanged ending
+        # -------------------------------------------------
+        #
+        # Byte for byte what this endpoint has always answered:
+        # a message and an id, no tokens. Register.jsx signs in
+        # with the password it already has straight afterwards,
+        # and that is still true.
+
+        db.commit()
+        db.refresh(user)
+
+        return {
+            "message": "User registered successfully",
+            "user_id": str(user.id),
+        }
+
+    # -----------------------------------------------------
+    # The code
+    # -----------------------------------------------------
+    #
+    # flush() and not commit(): the user row needs its id before
+    # the verification row can point at it, and the two belong in
+    # one transaction. An account committed without its code
+    # would be an account nobody could ever claim.
+
+    db.flush()
+
+    code = issue_verification_code(db, user)
+
     db.commit()
     db.refresh(user)
 
-    return {
-        "message": "User registered successfully",
-        "user_id": str(user.id),
-    }
+    # -----------------------------------------------------
+    # Then send it
+    # -----------------------------------------------------
+    #
+    # Queued after the commit, like the contact notification and
+    # for the same reason: the task opens its own session and
+    # must never look for a row that is still inside an open
+    # transaction. Registration does not wait on SMTP - the
+    # student is already looking at the code field by the time
+    # Gmail is answering.
+
+    background_tasks.add_task(
+        send_verification_email,
+        user.id,
+        code,
+    )
+
+    # 201 rather than the 200 the unchanged ending returns.
+    # The two answers are different things: one hands back an
+    # account that is ready to use, the other reports that
+    # something was created and is waiting on the student.
+    response.status_code = 201
+
+    return RegisteredResponse(
+        message=(
+            "Account created. Check your email for the "
+            "verification code."
+        ),
+        user_id=str(user.id),
+        email=user.email,
+    )
 
 
 # =========================================================
@@ -613,6 +992,37 @@ def login(
             detail="Invalid email or password",
         )
 
+    # -----------------------------------------------------
+    # Has this address been proved to be real?
+    # -----------------------------------------------------
+    #
+    # AFTER the password check and never before it. Asked first,
+    # this branch would tell anybody who typed an address whether
+    # it has an account here and whether that account has been
+    # claimed - a question the 401 above is deliberately careful
+    # not to answer.
+    #
+    # 403 rather than 401: the credentials were right. What is
+    # missing is not proof of who they are but proof that the
+    # address reaches them, and the browser needs to tell those
+    # two apart - one leads to the password field, the other to
+    # the code field.
+    #
+    # Nothing else about this endpoint changed. The password
+    # check above, the tokens below and token_version are exactly
+    # as they were.
+    if (
+        email_verification_is_active()
+        and not user.email_verified
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "This email address has not been verified yet. "
+                "Enter the code we sent you, or ask for a new one."
+            ),
+        )
+
     access_token = create_access_token(
         data={
             "sub": str(user.id),
@@ -632,6 +1042,302 @@ def login(
         "refresh_token": refresh_token,
         "token_type": "bearer",
     }
+
+# =========================================================
+# AUTHENTICATION - VERIFY EMAIL
+# =========================================================
+
+@app.post(
+    "/auth/verify-email",
+    response_model=TokenResponse,
+)
+def verify_email(
+    verification_data: VerifyEmailRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Exchange a six-digit code for a signed-in session.
+
+    Returns the same token pair login returns, which is the whole
+    point: the student typed a code because they were in the
+    middle of creating an account, and finishing that should put
+    them inside the app rather than back at a sign-in form asking
+    for the password they entered ninety seconds ago.
+
+    EVERY FAILURE IS THE SAME 400 AND THE SAME SENTENCE - wrong
+    code, expired code, spent code, too many guesses, no account
+    at that address at all. Telling them apart would be telling
+    whoever is asking which addresses have accounts here, and
+    telling a guesser whether the code they are working on is
+    still alive.
+    """
+
+    # One object, raised from five places. Written once so the
+    # five can never drift into five slightly different
+    # sentences, which is how a "do not reveal" rule quietly
+    # stops holding.
+    refused = HTTPException(
+        status_code=400,
+        detail=(
+            "That code is not valid. Ask for a new one and try "
+            "again."
+        ),
+    )
+
+    user = (
+        db.query(User)
+        .filter(
+            User.email == verification_data.email
+        )
+        .first()
+    )
+
+    if not user:
+        raise refused
+
+    # Trimmed, because a code copied out of an email arrives with
+    # a space on one end often enough, and translated out of
+    # Arabic-Indic digits, because a student typing on an Arabic
+    # keyboard is typing the same code the email showed them.
+    code = (
+        verification_data.code
+        .strip()
+        .translate(VERIFICATION_DIGIT_TRANSLATION)
+    )
+
+    verification = newest_live_verification(db, user)
+
+    if not verification:
+        raise refused
+
+    # -----------------------------------------------------
+    # Count the guess before judging it
+    # -----------------------------------------------------
+    #
+    # Incremented and COMMITTED before the comparison, so that a
+    # guess costs an attempt whatever happens next. Counting
+    # afterwards would mean a client that hangs up mid-request,
+    # or a process that dies, hands back a free guess - and free
+    # guesses are the only thing standing between a six-digit
+    # code and a script.
+
+    verification.attempts += 1
+
+    db.commit()
+
+    if verification.attempts > MAX_VERIFICATION_ATTEMPTS:
+
+        # The code is dead from here on, not merely refused. A
+        # row that stays alive after the limit would let somebody
+        # keep guessing at a code whose attempt counter no longer
+        # protects it, and would let the right code still work
+        # after we decided this row was being attacked.
+        #
+        # used_at rather than a delete: the row is evidence that
+        # somebody sat and guessed, and a resend issues a fresh
+        # one anyway.
+        verification.used_at = datetime.now(timezone.utc)
+
+        db.commit()
+
+        logger.warning(
+            "Verification code for user %s was abandoned after "
+            "too many wrong attempts.",
+            user.id,
+        )
+
+        raise refused
+
+    # bcrypt, because that is what the code was hashed with. The
+    # comparison is constant time for the same reason the
+    # password's is.
+    if not verify_password(
+        code,
+        verification.code_hash,
+    ):
+        raise refused
+
+    # -----------------------------------------------------
+    # It was right
+    # -----------------------------------------------------
+    #
+    # Both writes in one commit. The address is verified and the
+    # code is spent together, so there is no instant in which a
+    # code that has already worked could work again.
+
+    user.email_verified = True
+    verification.used_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(user)
+
+    # The same pair login issues, written out here rather than
+    # shared with it. Login's token issuing is deliberately left
+    # untouched by this feature - it is the path every existing
+    # account uses every day, and it is not worth refactoring to
+    # save twelve lines.
+    access_token = create_access_token(
+        data={
+            "sub": str(user.id),
+            "ver": user.token_version,
+        }
+    )
+
+    refresh_token = create_refresh_token(
+        data={
+            "sub": str(user.id),
+            "ver": user.token_version,
+        }
+    )
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
+
+
+# =========================================================
+# AUTHENTICATION - RESEND VERIFICATION CODE
+# =========================================================
+
+@app.post("/auth/resend-verification")
+def resend_verification(
+    resend_data: ResendVerificationRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    Issue a fresh code and invalidate the one before it.
+
+    ALWAYS ANSWERS 200, whether the address has an account, has
+    no account, or has one that is already verified. Nobody is
+    signed in when this is called, so the only thing a different
+    answer could do is tell a stranger which addresses are
+    registered here - which would turn a convenience for a
+    student whose code went missing into a way to harvest the
+    user table.
+
+    The one exception is the rate limit, which answers 429. That
+    is a deliberate trade and it is not free: it tells somebody
+    who asks four times in an hour that there is an account
+    behind the address. It is accepted because the alternative -
+    pretending to send while refusing - would leave a student
+    pressing Resend and being told a code is on its way when
+    none is.
+    """
+
+    # The same sentence whatever happened, for the reason in the
+    # docstring. It promises nothing about an account existing.
+    accepted = {
+        "message": (
+            "If that address needs verifying, a new code is on "
+            "its way."
+        )
+    }
+
+    # Nothing to verify while the feature is off. No row, no
+    # email, and the same answer as every other case - a
+    # different one here would report the state of the switch to
+    # anyone who asked.
+    if not email_verification_is_active():
+        return accepted
+
+    user = (
+        db.query(User)
+        .filter(
+            User.email == resend_data.email
+        )
+        .first()
+    )
+
+    if not user:
+        return accepted
+
+    if user.email_verified:
+        return accepted
+
+    # -----------------------------------------------------
+    # The rate limit
+    # -----------------------------------------------------
+    #
+    # A COUNT over this account's rows in the last hour, exactly
+    # as the contact form counts its messages: no package, and no
+    # counter in memory that a restart resets and that is wrong
+    # the moment the app runs as more than one process.
+    #
+    # Checked BEFORE anything is invalidated. A refused resend
+    # must leave the student holding the code they already have -
+    # killing it first and then refusing to send a replacement
+    # would be the one outcome worse than not resending at all.
+
+    window_start = (
+        datetime.now(timezone.utc)
+        - VERIFICATION_RATE_LIMIT_WINDOW
+    )
+
+    recent_code_count = (
+        db.query(func.count(EmailVerification.id))
+        .filter(
+            EmailVerification.user_id == user.id,
+            EmailVerification.created_at >= window_start,
+        )
+        .scalar()
+    )
+
+    if recent_code_count >= MAX_VERIFICATION_CODES_PER_HOUR:
+
+        # No number in the sentence, the same decision the
+        # contact form's 429 documents: the student needs to know
+        # to wait, not where the line is, and a number written
+        # here would be a second place for the constant to live.
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Too many codes have been requested for this "
+                "account. Please wait a while before asking for "
+                "another."
+            ),
+        )
+
+    # -----------------------------------------------------
+    # Out with the old, in with the new
+    # -----------------------------------------------------
+    #
+    # Every outstanding code is spent, not deleted, and then one
+    # replaces them. Two live codes at once would mean the older
+    # one - the one in the email the student has already decided
+    # is missing - still opened the account.
+    #
+    # One UPDATE rather than a loop, because the rows are only
+    # touched to be marked and there is nothing to read back.
+
+    (
+        db.query(EmailVerification)
+        .filter(
+            EmailVerification.user_id == user.id,
+            EmailVerification.used_at.is_(None),
+        )
+        .update(
+            {
+                EmailVerification.used_at: datetime.now(timezone.utc),
+            },
+            synchronize_session=False,
+        )
+    )
+
+    code = issue_verification_code(db, user)
+
+    db.commit()
+
+    background_tasks.add_task(
+        send_verification_email,
+        user.id,
+        code,
+    )
+
+    return accepted
+
 
 # =========================================================
 # AUTHENTICATION - REFRESH TOKEN

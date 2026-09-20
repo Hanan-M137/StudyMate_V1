@@ -146,6 +146,19 @@ export default {
     contactTooLong: 'A message cannot be longer than {max} characters.',
     contactRateLimited:
       'You have sent several messages in the last hour. Please wait a while before sending another.',
+
+    /* Email verification's three sentences.
+
+       verificationCodeInvalid is the only thing /auth/verify-email ever
+       says - wrong code, expired code, spent code, too many guesses and no
+       such account all answer with it. That is the server refusing to tell
+       a guesser which of those happened, and the Arabic must not be more
+       specific than the English. */
+    emailNotVerified:
+      'This email address has not been verified yet. Enter the code we sent you, or ask for a new one.',
+    verificationCodeInvalid: 'That code is not valid. Ask for a new one and try again.',
+    verificationRateLimited:
+      'Too many codes have been requested for this account. Please wait a while before asking for another.',
   },
 
   /* ========================================================================
@@ -208,6 +221,39 @@ export default {
     createAccountSubtitle: 'Register, then upload your first PDF.',
     alreadyRegistered: 'Already registered?',
     couldNotCreateAccount: 'Could not create the account.',
+
+    /* The verification step - the state the registration page moves into
+       when the server answers with a code instead of an account ready to
+       use, and the one the sign-in page moves into on a 403.
+
+       Nothing here names a number of minutes. The email says how long the
+       code lasts, and repeating it in the interface would be a second place
+       for VERIFICATION_CODE_MINUTES to live and go stale. */
+    verifyTitle: 'Verify your email',
+    verifySubtitle: 'Enter the code we just sent you to finish creating your account.',
+    verifyFromSignInSubtitle:
+      'This account has not been verified yet. Enter the code to sign in.',
+
+    /* The address itself is not in this sentence - it is rendered beside it
+       as its own element. See the note in VerifyEmailPanel.jsx. */
+    verifySentTo: 'We sent a six-digit code to:',
+
+    verificationCode: 'Verification code',
+    verificationCodeHint: 'Six digits, from the email that has just been sent.',
+    verify: 'Verify',
+
+    noCodeYet: 'Did not get it?',
+    sendNewCode: 'Send a new code',
+
+    /* Word for word what the server answers, and deliberately so: it
+       promises that a code is on its way IF the address needs one, because
+       the endpoint answers the same way whether or not the account exists
+       and the interface must not claim to know more than it does. */
+    verifyResent: 'If that address needs verifying, a new code is on its way.',
+
+    backToSignIn: 'Back to sign in',
+    couldNotVerify: 'Could not verify the code.',
+    couldNotResend: 'Could not send a new code.',
 
     pitchTitle: 'Upload your course PDFs, then ask them questions.',
     pitchBody:

@@ -18,6 +18,9 @@
        and the page range
      - the contact form's refusals: an empty message, one that is too
        short or too long, and too many messages in one hour
+     - email verification: the 403 at sign-in for an address that has not
+       been verified, the single sentence every verify-email failure
+       answers with, and the 429 for too many codes in one hour
 
    Everything else main.py can say is deliberately left alone and reaches the
    student in English. Those are the messages the interface either prevents
@@ -76,6 +79,29 @@ const EXACT = {
 
   'You have sent several messages in the last hour. Please wait a while before sending another.':
     'server.contactRateLimited',
+
+  /* SOURCE: the three email-verification endpoints in backend/main.py.
+
+     The first is the 403 from /auth/login - the only 403 that endpoint
+     sends, and the one the sign-in page turns into the code field rather
+     than a dead end.
+
+     The second is every failure /auth/verify-email has: a wrong code, an
+     expired one, a spent one, too many guesses, and an address with no
+     account behind it all answer with this one sentence. Matching it whole
+     is exactly right, because there is only one.
+
+     The third is the 429 from /auth/resend-verification. Like the contact
+     form's, it carries no number - MAX_VERIFICATION_CODES_PER_HOUR stays in
+     main.py - so it matches whole rather than by shape. */
+  'This email address has not been verified yet. Enter the code we sent you, or ask for a new one.':
+    'server.emailNotVerified',
+
+  'That code is not valid. Ask for a new one and try again.':
+    'server.verificationCodeInvalid',
+
+  'Too many codes have been requested for this account. Please wait a while before asking for another.':
+    'server.verificationRateLimited',
 
   'num_questions must be at least 1': 'server.numQuestionsMin',
   'num_questions cannot exceed 50': 'server.numQuestionsMax',
