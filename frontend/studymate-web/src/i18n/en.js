@@ -35,6 +35,14 @@ export default {
     somethingWentWrong: 'Something went wrong',
     backToTop: 'Back to top',
 
+    /* The accessible name of the eye on a password field, and the whole of
+       it - the button has no visible text. Two sentences rather than one,
+       because the label has to change with the state: a control that still
+       says "Show password" while the password is on the screen describes
+       the opposite of what pressing it does. */
+    showPassword: 'Show password',
+    hidePassword: 'Hide password',
+
     /* The second step of a two-step delete, shared by the quiz row and the
        conversation row: the same question, asked the same way. */
     deleting: 'Deleting...',

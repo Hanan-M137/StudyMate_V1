@@ -45,6 +45,11 @@ export default {
     somethingWentWrong: 'حدث خطأ ما',
     backToTop: 'العودة إلى الأعلى',
 
+    /* Imperative, per rule 3 at the top of this file: these name what the
+       button does, not a section. */
+    showPassword: 'أظهر كلمة المرور',
+    hidePassword: 'أخفِ كلمة المرور',
+
     deleting: 'جارٍ الحذف...',
     yesDelete: 'نعم، احذف',
 

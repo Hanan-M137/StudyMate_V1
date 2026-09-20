@@ -163,3 +163,33 @@ export function ArrowUpIcon(props) {
     </svg>
   )
 }
+
+/** An open eye, for revealing a password field.
+
+    Not mirrored in a right-to-left layout. An eye points at nothing and
+    reads the same shape either way, like the document, chat, quiz and
+    envelope icons and unlike the logout arrow. */
+export function EyeIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M1.8 10S4.9 4.8 10 4.8 18.2 10 18.2 10 15.1 15.2 10 15.2 1.8 10 1.8 10Z" />
+      <circle cx="10" cy="10" r="2.35" />
+    </svg>
+  )
+}
+
+/** The same eye struck through, for hiding a password field again.
+
+    The stroke is what carries the meaning on its own: the two states are
+    told apart by a line across the glyph rather than by a change of colour,
+    which a student who cannot distinguish them would not see. */
+export function EyeOffIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M8.2 5.1A7 7 0 0 1 10 4.8c5.1 0 8.2 5.2 8.2 5.2a15 15 0 0 1-2.6 3.2" />
+      <path d="M4.5 6.4A15.4 15.4 0 0 0 1.8 10S4.9 15.2 10 15.2c1.2 0 2.3-.3 3.3-.8" />
+      <path d="M8.3 8.3a2.35 2.35 0 0 0 3.4 3.4" />
+      <path d="m3.6 3.6 12.8 12.8" />
+    </svg>
+  )
+}

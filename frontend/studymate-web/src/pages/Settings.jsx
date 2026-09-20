@@ -20,6 +20,7 @@ import {
   Field,
   Input,
   InlineError,
+  PasswordInput,
 } from '../components/ui'
 
 /* ==========================================================================
@@ -348,9 +349,8 @@ function PasswordForm() {
 
       <Field label={t('settings.currentPassword')} required>
         {(field) => (
-          <Input
+          <PasswordInput
             {...field}
-            type="password"
             autoComplete="current-password"
             value={currentPassword}
             onChange={(event) => {
@@ -367,9 +367,8 @@ function PasswordForm() {
         hint={t(PASSWORD_HINT_KEY, { min: MIN_PASSWORD_LENGTH })}
       >
         {(field) => (
-          <Input
+          <PasswordInput
             {...field}
-            type="password"
             autoComplete="new-password"
             value={newPassword}
             onChange={(event) => {
@@ -382,9 +381,8 @@ function PasswordForm() {
 
       <Field label={t('settings.confirmNewPassword')} required>
         {(field) => (
-          <Input
+          <PasswordInput
             {...field}
-            type="password"
             autoComplete="new-password"
             value={confirmPassword}
             onChange={(event) => {

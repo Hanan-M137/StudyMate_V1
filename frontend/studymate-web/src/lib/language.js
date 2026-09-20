@@ -155,6 +155,63 @@ export function isolate(value) {
 export function contentDir(value, lang) {
   if (typeof value === 'string' && value !== '') return 'auto'
 
+  return interfaceDir(lang)
+}
+
+/* ==========================================================================
+   The direction of a block of content we are only displaying
+   ========================================================================== */
+
+/* Does this text contain a character that dir="auto" can read a direction
+   from?
+
+   WHAT dir="auto" ACTUALLY DOES: it walks the text for the first character
+   of bidi class L, R or AL - a STRONG character - and takes its direction.
+   Digits are not strong. They are class EN and AN, which the bidi algorithm
+   treats as weak precisely so that a number can sit inside a sentence of
+   either direction without changing it. Punctuation, spaces and symbols are
+   weaker still.
+
+   So a line with no letters in it - "2 + 2 = ?", "1998-2004", "%75" - has
+   nothing strong in it at all, dir="auto" finds no answer, and the HTML
+   spec's fallback is left-to-right. In an Arabic interface that is one
+   question sitting against the left edge with every other question on the
+   page against the right.
+
+   \p{L} rather than a Latin range, for the same reason lib/password.js uses
+   it: Arabic letters are letters. A character in Unicode's Letter category
+   is strong in the bidi algorithm, and one outside it - a digit, a comma,
+   an operator - is not, which is exactly the line being drawn here. */
+const HAS_STRONG_CHARACTER = /\p{L}/u
+
+/**
+ * What to put in the `dir` of an element holding a block of content.
+ *
+ * 'auto' whenever the browser can answer the question itself, because it
+ * answers it better than we can: it reads the real first strong character,
+ * so an English question inside the Arabic interface still comes out
+ * left-to-right and an Arabic one inside the English interface still comes
+ * out right-to-left. That content rule is the one the i18n batch settled
+ * and this must not trade it away.
+ *
+ * The interface language only when there is no strong character to read at
+ * all, which is the single case 'auto' gets wrong. It is a stand-in for an
+ * answer the text does not contain, never a replacement for one it does -
+ * the same bargain contentDir above makes for an empty field.
+ *
+ * @param value  the text that will be rendered inside the element
+ * @param lang   the interface language, from useI18n()
+ */
+export function textDir(value, lang) {
+  if (typeof value === 'string' && HAS_STRONG_CHARACTER.test(value)) return 'auto'
+
+  return interfaceDir(lang)
+}
+
+/* The interface's own direction, for the two functions above to fall back
+   on. One expression, one place: they are answering the same question when
+   the content cannot answer it. */
+function interfaceDir(lang) {
   return lang === 'ar' ? 'rtl' : 'ltr'
 }
 

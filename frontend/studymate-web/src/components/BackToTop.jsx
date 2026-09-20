@@ -66,14 +66,37 @@ export default function BackToTop() {
   if (!visible) return null
 
   return (
-    /* Bottom LEFT. The conversation page keeps its Send button at the bottom
-       right, and a floating button on top of it would cover the control the
-       student is actually reaching for. */
+    /* WHERE THIS SITS, AND WHY IT IS NOT SIMPLY "BOTTOM LEFT".
+
+       The start side is settled: the conversation and document-chat pages
+       keep their Send button at the bottom end of the content, and a
+       floating button on top of that covers the control the student is
+       actually reaching for. Moving this to the end side trades one
+       collision for a worse one.
+
+       But bottom-start measured from the VIEWPORT is the sidebar, not the
+       content - at a desktop width `start-5` put this squarely on top of
+       Sign out. So from `lg` up, where the sidebar exists, the offset
+       clears it: one sidebar plus the same 1.25rem gap it uses everywhere
+       else. That lands the button in the padding gutter <main> already
+       has, which is empty by construction, so it can reach neither the
+       sidebar behind it nor the content column beside it.
+
+       An offset rather than a containing block, because `position: fixed`
+       only yields to an ancestor with a transform, filter or containment,
+       and giving <main> one of those to move a 40px button would put the
+       whole application inside a new stacking and containing context - and
+       the chat composer sticky-positioned inside it is exactly the kind of
+       thing that breaks on.
+
+       Below `lg` the sidebar is not rendered and the plain `start-5`
+       applies, which is why the offset is breakpoint-scoped rather than
+       unconditional. */
     <button
       type="button"
       onClick={scrollToTop}
       aria-label={t('common.backToTop')}
-      className="no-print animate-enter fixed bottom-5 start-5 z-30 flex h-10 w-10 items-center justify-center rounded-full border border-line-strong bg-surface text-ink-soft shadow-raised transition-colors duration-150 hover:bg-sunken hover:text-ink"
+      className="no-print animate-enter fixed bottom-5 start-5 z-30 flex h-10 w-10 items-center justify-center rounded-full border border-line-strong bg-surface text-ink-soft shadow-raised transition-colors duration-150 hover:bg-sunken hover:text-ink lg:start-[calc(var(--sidebar-width)+1.25rem)]"
     >
       <ArrowUpIcon className="h-[18px] w-[18px]" />
     </button>

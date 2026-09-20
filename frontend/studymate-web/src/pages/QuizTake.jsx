@@ -9,7 +9,7 @@ import {
   translateQuestionType,
 } from '../api/quizzes'
 import { useI18n } from '../context/I18nContext'
-import { dateLocale, isolate } from '../lib/language'
+import { dateLocale, isolate, textDir } from '../lib/language'
 import { getErrorMessage } from '../lib/errors'
 import { CheckIcon, CloseIcon } from '../components/icons'
 import {
@@ -376,8 +376,41 @@ function QuizTakePage({ quizId }) {
   )
 }
 
+/* ==========================================================================
+   A reading-width block whose direction comes from its CONTENT.
+
+   WHAT WENT WRONG WITHOUT THE `me-auto`: `.measure` caps the line length at
+   65ch, so the box is narrower than the card it sits in, and something has
+   to decide which side the leftover width goes to. CSS decides that from
+   the CONTAINING BLOCK's direction - the card's, which is the interface's.
+   But the text inside the box is placed by `text-align: start`, and `start`
+   resolves against the ELEMENT's OWN direction, which textDir() sets from
+   the question. When the two languages differ the box and its text are
+   anchored to opposite edges, and the leftover width opens up as a gap
+   between them: an Arabic question in the English interface wraps to a
+   second line that stops in the middle of the card, and an English question
+   in the Arabic interface starts a third of the way in.
+
+   The explanation line below each question has never shown this, which is
+   what identified it: it carries no `.measure`, so it is full-width, so
+   there is no leftover width to put on the wrong side.
+
+   WHY `margin-inline-end: auto` FIXES IT: a logical margin resolves against
+   the element's own direction, not its parent's. Handing the leftover width
+   to the element's own inline-end anchors the box at the element's own
+   inline-start - the very edge its text is already aligned to. Box and text
+   then agree in all four language combinations, and in the two where they
+   already agreed nothing moves.
+
+   `.measure` itself is left alone. The reading-width limit is deliberate
+   and most of the places using it hold interface text, where the box and
+   the text take their direction from the same place anyway.
+   ========================================================================== */
+
+const ANCHORED_MEASURE = 'measure me-auto'
+
 function QuestionCard({ index, total, question, value, locked, feedback, onChange }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
 
   /* Three outcomes, not two: a short answer can be partially right, and the
      student is told which part they got. `correct` is kept as the fallback so
@@ -406,10 +439,18 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
       </legend>
 
       <div className="mb-3.5 flex items-start justify-between gap-4">
-        {/* dir="auto" on the whole line, number included: an Arabic
-            question numbered on the left would read as two fragments rather
-            than one line. */}
-        <p dir="auto" className="measure type-body font-medium text-ink">
+        {/* The number stays inside the line rather than in an isolate of
+            its own: an Arabic question numbered on the left would read as
+            two fragments rather than one line. It cannot disturb the
+            direction from in there - digits are bidi-weak, which is the
+            whole reason they are safe in a sentence of either direction.
+            What CAN go wrong is a question with no letters in it at all,
+            and textDir is what answers that one. ANCHORED_MEASURE above is
+            what keeps the box on the side textDir aligned the text to. */}
+        <p
+          dir={textDir(question.text, lang)}
+          className={cx(ANCHORED_MEASURE, 'type-body font-medium text-ink')}
+        >
           <span className="me-2 text-faint tabular-nums">{index + 1}.</span>
           {/* The question itself is the generator's text, shown as it was
               written. Only the note standing in for a missing one is ours. */}
@@ -637,6 +678,44 @@ function formatScore(score, totalQuestions) {
   return `${scored} / ${totalQuestions}`
 }
 
+/* ==========================================================================
+   The attempts table's cell classes.
+
+   WHY THE HEADERS AND THE BODY DID NOT LINE UP: the alignment was written
+   once, as `text-start`, on the header <tr>. It never reached the cells. A
+   <th> carries `text-align` in the browser's own stylesheet - Chromium's
+   `-internal-center` and Gecko's `-moz-center-or-inherit` - and that rule
+   only steps aside for an ancestor whose text-align differs from the
+   initial value. `start` IS the initial value, so nothing differed, the
+   headers kept the browser's centring, and every body cell below them sat
+   at the start of its column. The columns themselves were never wrong:
+   one <table>, identical padding, no widths anywhere. It was the text
+   inside them.
+
+   The cure is to state the alignment on the cell rather than on the row.
+   An author declaration on the <th> itself outranks the browser's, so the
+   header lands wherever the body cell below it lands.
+
+   WHY THESE ARE CONSTANTS: a column is a header and a body cell written
+   thirty lines apart that have to agree. Naming the pair once is what
+   stops them drifting again - which is the whole of what went wrong here.
+   ========================================================================== */
+
+const CELL = 'px-4 py-2.5'
+
+const HEAD = `type-micro ${CELL} font-medium text-muted`
+
+const TEXT_HEAD = `${HEAD} text-start`
+
+/* Score, Percentage and Time. They end at the same place down the column,
+   which is what lets two attempts be compared by eye without reading them:
+   `tabular-nums` makes the digits equal width, `text-end` lines up where
+   the runs finish. Logical, not `text-right`, so the Arabic interface ends
+   them at its own end of the column. */
+const NUMERIC_HEAD = `${HEAD} text-end`
+
+const NUMERIC_CELL = `${CELL} text-end tabular-nums text-ink`
+
 /**
  * Past attempts at this quiz, newest first, each one openable.
  *
@@ -689,23 +768,23 @@ function AttemptsTable({ quizId, attempts }) {
       <div className="overflow-x-auto rounded-xl border border-line bg-surface">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-line text-start">
-              <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
+            <tr className="border-b border-line">
+              <th scope="col" className={TEXT_HEAD}>
                 {t('attempts.colAttempt')}
               </th>
-              <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
+              <th scope="col" className={NUMERIC_HEAD}>
                 {t('attempts.colScore')}
               </th>
-              <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
+              <th scope="col" className={NUMERIC_HEAD}>
                 {t('attempts.colPercentage')}
               </th>
-              <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
+              <th scope="col" className={NUMERIC_HEAD}>
                 {t('attempts.colTime')}
               </th>
-              <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
+              <th scope="col" className={TEXT_HEAD}>
                 {t('attempts.colTaken')}
               </th>
-              <th scope="col" className="type-micro px-4 py-2.5 font-medium text-muted">
+              <th scope="col" className={cx(HEAD, 'text-end')}>
                 <span className="sr-only">{t('attempts.colAnswers')}</span>
               </th>
             </tr>
@@ -713,7 +792,7 @@ function AttemptsTable({ quizId, attempts }) {
           <tbody>
             {attempts.map((attempt, index) => (
               <tr key={attempt.id} className="border-b border-line last:border-b-0">
-                <td className="px-4 py-2.5 tabular-nums text-muted">
+                <td className={cx(CELL, 'tabular-nums text-start text-muted')}>
                   {attempts.length - index}
                 </td>
                 {/* One isolated string rather than two nodes either side
@@ -721,22 +800,24 @@ function AttemptsTable({ quizId, attempts }) {
                     into two separate number runs, which lay out
                     right-to-left in the Arabic interface and swap, so a
                     student reads five out of one. */}
-                <td className="px-4 py-2.5 tabular-nums text-ink">
+                <td className={NUMERIC_CELL}>
                   {isolate(formatScore(attempt.score, attempt.totalQuestions))}
                 </td>
-                <td className="px-4 py-2.5 tabular-nums text-ink">
+                <td className={NUMERIC_CELL}>
                   {attempt.percentage != null ? `${Math.round(attempt.percentage)}%` : '--'}
                 </td>
                 {/* An em dash, not 00:00: every attempt made before the
                     timer existed has no duration, and a zero would read as a
-                    quiz answered instantly. */}
-                <td className="px-4 py-2.5 tabular-nums text-ink">
+                    quiz answered instantly. It sits in the numeric column
+                    like any other value, so it ends where the digits above
+                    and below it end. */}
+                <td className={NUMERIC_CELL}>
                   {formatDuration(attempt.durationSeconds) || '—'}
                 </td>
-                <td className="px-4 py-2.5 text-muted">
+                <td className={cx(CELL, 'text-start text-muted')}>
                   {formatDateTime(attempt.completedAt, dateLocale(lang)) || '--'}
                 </td>
-                <td className="px-4 py-2.5 text-end">
+                <td className={cx(CELL, 'text-end')}>
                   <button
                     type="button"
                     onClick={() => toggleAttempt(attempt.id)}
@@ -770,7 +851,7 @@ function AttemptsTable({ quizId, attempts }) {
 
 /** One opened attempt: every question, with what was written and what was right. */
 function AttemptDetail({ detail }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
 
   if (!detail.questions || detail.questions.length === 0) {
     return <p className="type-small text-muted">{t('attempts.noAnswers')}</p>
@@ -794,7 +875,14 @@ function AttemptDetail({ detail }) {
                   : 'border-line',
             )}
           >
-            <p dir="auto" className="measure type-small font-medium text-ink">
+            {/* Same line, same reasoning, as the question on the quiz
+                itself above: the number rides inside the line, and the
+                direction is read from the question's own text - or from
+                the interface, when the question has no letters to read. */}
+            <p
+              dir={textDir(question.text, lang)}
+              className={cx(ANCHORED_MEASURE, 'type-small font-medium text-ink')}
+            >
               <span className="me-2 text-faint tabular-nums">{index + 1}.</span>
               {question.text}
             </p>
@@ -812,7 +900,7 @@ function AttemptDetail({ detail }) {
                 {right ? <AnswerValue answer={right} /> : '--'}
               </p>
               {question.explanation ? (
-                <p dir="auto" className="text-muted">
+                <p dir={textDir(question.explanation, lang)} className="text-muted">
                   {question.explanation}
                 </p>
               ) : null}

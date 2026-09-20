@@ -53,7 +53,7 @@ export default function AppShell() {
     /* `app-shell` is a print hook, not a style: the two-column grid has to
        collapse once the sidebar is hidden, or the content prints inside the
        16rem track the sidebar left behind. See @media print in index.css. */
-    <div className="app-shell min-h-full lg:grid lg:grid-cols-[16rem_1fr]">
+    <div className="app-shell min-h-full lg:grid lg:grid-cols-[var(--sidebar-width)_1fr]">
       <a
         href="#main"
         className="no-print sr-only focus:not-sr-only focus:absolute focus:start-4 focus:top-4 focus:z-50 focus:rounded-sm focus:bg-surface focus:px-4 focus:py-2 focus:shadow-pop"

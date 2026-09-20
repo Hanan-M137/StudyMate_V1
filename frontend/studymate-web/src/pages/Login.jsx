@@ -3,7 +3,7 @@ import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useI18n } from '../context/I18nContext'
 import { getErrorMessage } from '../lib/errors'
-import { Button, Field, Input, InlineError } from '../components/ui'
+import { Button, Field, Input, InlineError, PasswordInput } from '../components/ui'
 import VerifyEmailPanel from '../components/VerifyEmailPanel'
 import AuthLayout from './AuthLayout'
 
@@ -128,9 +128,8 @@ export default function Login() {
 
         <Field label={t('auth.password')} required>
           {(field) => (
-            <Input
+            <PasswordInput
               {...field}
-              type="password"
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}

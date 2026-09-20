@@ -8,7 +8,7 @@ import {
   PASSWORD_HINT_KEY,
   getPasswordErrorKey,
 } from '../lib/password'
-import { Button, Field, Input, InlineError } from '../components/ui'
+import { Button, Field, Input, InlineError, PasswordInput } from '../components/ui'
 import VerifyEmailPanel from '../components/VerifyEmailPanel'
 import AuthLayout from './AuthLayout'
 
@@ -161,9 +161,8 @@ export default function Register() {
           hint={t(PASSWORD_HINT_KEY, { min: MIN_PASSWORD_LENGTH })}
         >
           {(field) => (
-            <Input
+            <PasswordInput
               {...field}
-              type="password"
               autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}

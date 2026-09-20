@@ -63,6 +63,13 @@
 :root {
   --body-size: 0.9375rem;
   --body-leading: 1.6;
+
+  /* The desktop sidebar's width, and the only place it is written down.
+     AppShell builds its two-column grid from it and BackToTop offsets
+     itself past it; before this was a property the number lived in one of
+     them and the floating button sat on top of the sign-out control. Two
+     copies of a width are two things to remember to change together. */
+  --sidebar-width: 16rem;
 }
 
 /* ==========================================================================
