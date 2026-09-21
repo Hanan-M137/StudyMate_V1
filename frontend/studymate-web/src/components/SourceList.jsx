@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useI18n } from '../context/I18nContext'
+import { looksLikeCode } from '../lib/code'
 import { ChevronIcon } from './icons'
 import { cx } from './ui'
 
@@ -70,7 +71,18 @@ export default function SourceList({ sources }) {
                   {/* The snippet is a passage out of the student's own PDF, so
                       it decides its own direction rather than inheriting the
                       interface's. */}
-                  {parsed.text != null ? (
+                  {parsed.text != null && looksLikeCode(parsed.text) ? (
+                    /* A code listing reads left to right whichever language
+                       the interface is in, and its indentation carries
+                       meaning, so it is not left to the snippet's dir="auto"
+                       and not left to a rule that collapses spaces. */
+                    <pre
+                      dir="ltr"
+                      className="type-micro overflow-x-auto whitespace-pre-wrap break-words font-mono text-ink-soft"
+                    >
+                      {parsed.text}
+                    </pre>
+                  ) : parsed.text != null ? (
                     <p
                       dir="auto"
                       className="type-small whitespace-pre-line text-ink-soft"

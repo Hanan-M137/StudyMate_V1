@@ -13,6 +13,11 @@
      wanted in two places: for the whole page when the interface is Arabic,
      and for a single Arabic word sitting inside an English page. */
   --font-arabic: "IBM Plex Sans Arabic", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  /* Code keeps a Latin monospace face in both interfaces. --font-sans is
+     swapped for the Arabic face under :root[lang="ar"] further down, and a
+     listing set in a proportional Arabic face loses the column alignment
+     that makes it readable. */
+  --font-mono: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
 
   /* Neutral base - warm, not blue-grey */
   --color-paper: #faf8f4;

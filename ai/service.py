@@ -86,6 +86,7 @@ def clean_text(text: str) -> str:
     - Fix broken line breaks
     - Remove excessive whitespace
     - Keep paragraph boundaries where possible
+    - Leave code listings with their line breaks and indentation
     """
 
     if not text:
@@ -107,35 +108,60 @@ def clean_text(text: str) -> str:
     text = text.replace("\r\n", "\n")
     text = text.replace("\r", "\n")
 
+    # Blocks are cleaned one at a time so that a code listing on a
+    # slide keeps its shape, while the prose around it does not keep
+    # the line breaks the PDF wrapped it with.
+    #
+    # Splitting on the blank line also collapses runs of them, which
+    # is the job the old \n{3,} rule used to do.
+    blocks = re.split(
+        r"\n{2,}",
+        text,
+    )
+
+    cleaned_blocks = [
+        block if looks_like_code(block) else clean_prose_block(block)
+        for block in blocks
+    ]
+
+    return "\n\n".join(
+        block
+        for block in cleaned_blocks
+        if block.strip()
+    ).strip()
+
+
+def clean_prose_block(block: str) -> str:
+    """
+    Clean one block of ordinary prose.
+
+    These are the rules clean_text applied to the whole page before
+    code listings had to survive it; they are unchanged, and prose
+    is cleaned exactly as it was.
+    """
+
     # Join words split with a hyphen at the end of a line
-    text = re.sub(
+    block = re.sub(
         r"(\w)-\n(\w)",
         r"\1\2",
-        text,
+        block,
     )
 
     # Replace single line breaks with spaces
-    text = re.sub(
+    block = re.sub(
         r"(?<!\n)\n(?!\n)",
         " ",
-        text,
+        block,
     )
 
     # Collapse repeated spaces and tabs
-    text = re.sub(
+    block = re.sub(
         r"[ \t]+",
         " ",
-        text,
+        block,
     )
 
-    # Collapse excessive blank lines
-    text = re.sub(
-        r"\n{3,}",
-        "\n\n",
-        text,
-    )
-
-    return text.strip()
+    return block
 
 
 # =========================================================
@@ -309,6 +335,67 @@ def extract_text_in_reading_order(page) -> str:
 
 ARABIC_CHARACTER_PATTERN = re.compile(r"[؀-ۿ]")
 LATIN_CHARACTER_PATTERN = re.compile(r"[A-Za-z]")
+
+
+# =========================================================
+# CODE BLOCK DETECTION
+# =========================================================
+#
+# Course slides carry code listings, and a listing is only
+# readable if its line breaks and its indentation survive
+# extraction. Prose is the opposite case: a PDF wraps a sentence
+# mid-line, and those breaks have to go or the sentence reaches
+# the student in pieces. The two are therefore cleaned
+# differently, and this is what decides which is which.
+#
+# Two matching lines are required rather than one, because a
+# single prose line ending in a semicolon or a colon is common
+# in these documents and a two-line run of them is not.
+
+CODE_LINE_PATTERN = re.compile(
+    r"[{};]\s*$"
+    r"|^\s{2,}\S"
+    r"|^\s*(import|package|public|private|protected|static|"
+    r"final|class|interface|void|return|if|else|for|while|"
+    r"switch|case|try|catch|def|function|const|let|var)\b"
+)
+
+MINIMUM_CODE_LINES = 2
+
+
+def looks_like_code(block: str) -> bool:
+    """
+    Decide whether a block of extracted text is a code listing.
+
+    An Arabic-dominant block is never treated as code. The slides
+    in this corpus write their code in Latin script, and an Arabic
+    paragraph that happens to contain a brace is still prose that
+    needs its wrapped lines joined back up.
+    """
+
+    lines = block.splitlines()
+
+    if len(lines) < MINIMUM_CODE_LINES:
+        return False
+
+    arabic_count = len(
+        ARABIC_CHARACTER_PATTERN.findall(block)
+    )
+
+    latin_count = len(
+        LATIN_CHARACTER_PATTERN.findall(block)
+    )
+
+    if arabic_count > latin_count:
+        return False
+
+    matching_lines = sum(
+        1
+        for line in lines
+        if CODE_LINE_PATTERN.search(line)
+    )
+
+    return matching_lines >= MINIMUM_CODE_LINES
 
 
 def detect_ocr_language(text: str) -> str:

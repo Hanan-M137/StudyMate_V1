@@ -6,6 +6,7 @@ import { sendChatMessage } from '../api/chat'
 import { useI18n } from '../context/I18nContext'
 import { getErrorMessage } from '../lib/errors'
 import { contentDir } from '../lib/language'
+import { splitCodeSegments } from '../lib/code'
 import SourceList from '../components/SourceList'
 import VoiceInput from '../components/VoiceInput'
 import { ChatIcon, SparkIcon } from '../components/icons'
@@ -379,9 +380,37 @@ export function MessageBubble({ message }) {
       <Card className="measure min-w-0 flex-1 px-4 py-3.5">
         {/* The answer is written in the language of the document, which is
             not necessarily the language of the interface around it. */}
-        <p dir="auto" className="type-body whitespace-pre-line text-ink">
-          {message.content || <em className="text-muted">{t('chat.emptyAnswer')}</em>}
-        </p>
+        {message.content ? (
+          splitCodeSegments(message.content).map((segment, index) =>
+            segment.type === 'code' ? (
+              /* Braces and brackets are bidi-mirrored, and ';' and '=' take
+                 the direction of the paragraph around them, so code inside
+                 an Arabic answer reorders into nonsense unless it is given
+                 its own direction here. Same reasoning as the address in
+                 VerifyEmailPanel: it is its own element, not interpolated
+                 into the sentence. */
+              <pre
+                key={index}
+                dir="ltr"
+                className="type-small my-2 overflow-x-auto whitespace-pre-wrap break-words font-mono text-ink"
+              >
+                {segment.text}
+              </pre>
+            ) : (
+              <p
+                key={index}
+                dir="auto"
+                className="type-body mb-2 whitespace-pre-line text-ink last:mb-0"
+              >
+                {segment.text}
+              </p>
+            ),
+          )
+        ) : (
+          <p dir="auto" className="type-body whitespace-pre-line text-ink">
+            <em className="text-muted">{t('chat.emptyAnswer')}</em>
+          </p>
+        )}
 
         <SourceList sources={message.sources} />
       </Card>
