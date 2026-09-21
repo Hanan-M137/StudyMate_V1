@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   MAX_ATTEMPT_DURATION_SECONDS,
+  deleteQuizAttempt,
   getQuiz,
   getQuizAttempt,
   listQuizAttempts,
@@ -16,6 +17,7 @@ import {
   Badge,
   Button,
   Card,
+  ConfirmDialog,
   EmptyState,
   ErrorState,
   InlineError,
@@ -283,7 +285,18 @@ function QuizTakePage({ quizId }) {
 
       {result ? <ScoreCard result={result} questionCount={questions.length} /> : null}
 
-      <AttemptsTable quizId={quizId} attempts={attempts} />
+      {/* The deleted row is filtered out of the list already held rather
+          than refetched. The server has confirmed the deletion by the time
+          this runs, and a refetch would put a spinner over a table whose
+          only change is one row fewer. Same handling as the quiz list's
+          onDeleted. */}
+      <AttemptsTable
+        quizId={quizId}
+        attempts={attempts}
+        onDeleted={(attemptId) =>
+          setAttempts((current) => current.filter((row) => row.id !== attemptId))
+        }
+      />
 
       {!result && questions.length > 0 ? (
         <div className="no-print sticky top-0 z-10 -mx-4 mb-6 border-b border-line bg-paper/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10">
@@ -571,7 +584,21 @@ function QuestionCard({ index, total, question, value, locked, feedback, onChang
         </div>
       )}
 
-      {question.sourcePage != null ? (
+      {/* Held back until the answers are in. Before that, "from page 12" is
+          a shortcut to the answer - the student stops recalling and goes
+          looking it up, which is the one thing a self-test exists to prevent.
+          `locked` is Boolean(result) at the call site, so the citation turns
+          on at the same moment the marks do, and turns back off on Retake,
+          which is a fresh attempt and deserves a clean sheet. It also keeps
+          the number off a worksheet printed before submitting, since what
+          prints is whatever the page is showing.
+
+          NOT the whole fix: GET /quizzes/{id} still sends `source_page` with
+          every question, so the number is readable in the network response
+          before the student answers. Closing that needs the backend to move
+          the field to the attempt results, the way `correct_answer` already
+          is. See the report that came with this change. */}
+      {locked && question.sourcePage != null ? (
         <p className="type-micro mt-3 text-faint">
           {t('quiz.fromPage', { page: question.sourcePage })}
         </p>
@@ -726,13 +753,20 @@ const NUMERIC_CELL = `${CELL} text-end tabular-nums text-ink`
  * re-judging it would be a paid call that could disagree with the mark the
  * student already saw.
  */
-function AttemptsTable({ quizId, attempts }) {
+function AttemptsTable({ quizId, attempts, onDeleted }) {
   const { t, lang } = useI18n()
 
   const [openId, setOpenId] = useState(null)
   const [detail, setDetail] = useState(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [detailError, setDetailError] = useState(null)
+
+  /* The whole row, not just its id: the dialog names the attempt by its
+     position in the table and by what it scored, and both of those are
+     worked out here during the map rather than stored on the attempt. */
+  const [pendingDelete, setPendingDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState(null)
 
   async function toggleAttempt(attemptId) {
     if (openId === attemptId) {
@@ -752,6 +786,33 @@ function AttemptsTable({ quizId, attempts }) {
       setDetailError(getErrorMessage(err, t, 'attempts.couldNotLoad'))
     } finally {
       setLoadingDetail(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!pendingDelete) return
+
+    setDeleteError(null)
+    setDeleting(true)
+
+    try {
+      await deleteQuizAttempt(quizId, pendingDelete.id)
+
+      /* The open panel belongs to a row that is about to stop existing,
+         so it is closed first. Leaving it would show the answers of an
+         attempt the table no longer lists. */
+      if (openId === pendingDelete.id) {
+        setOpenId(null)
+        setDetail(null)
+        setDetailError(null)
+      }
+
+      onDeleted?.(pendingDelete.id)
+      setPendingDelete(null)
+    } catch (err) {
+      setDeleteError(getErrorMessage(err, t, 'attempts.couldNotDelete'))
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -817,14 +878,39 @@ function AttemptsTable({ quizId, attempts }) {
                 <td className={cx(CELL, 'text-start text-muted')}>
                   {formatDateTime(attempt.completedAt, dateLocale(lang)) || '--'}
                 </td>
+                {/* Both controls in the one cell, and the delete one second:
+                    the harmless control is the one the eye and the Tab key
+                    reach first. The confirmation opens in a dialog rather
+                    than expanding in place, the way the quiz row's does -
+                    a confirm sentence inside a table cell widens the last
+                    column and makes every row jump sideways. */}
                 <td className={cx(CELL, 'text-end')}>
-                  <button
-                    type="button"
-                    onClick={() => toggleAttempt(attempt.id)}
-                    className="type-micro rounded-sm px-2 py-1 font-medium text-muted underline underline-offset-4 transition-colors hover:text-ink"
-                  >
-                    {openId === attempt.id ? t('attempts.hideAnswers') : t('attempts.viewAnswers')}
-                  </button>
+                  <div className="flex items-center justify-end gap-1">
+                    <button
+                      type="button"
+                      onClick={() => toggleAttempt(attempt.id)}
+                      className="type-micro rounded-sm px-2 py-1 font-medium text-muted underline underline-offset-4 transition-colors hover:text-ink"
+                    >
+                      {openId === attempt.id
+                        ? t('attempts.hideAnswers')
+                        : t('attempts.viewAnswers')}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeleteError(null)
+                        setPendingDelete({
+                          id: attempt.id,
+                          number: attempts.length - index,
+                          score: formatScore(attempt.score, attempt.totalQuestions),
+                        })
+                      }}
+                      className="type-micro rounded-sm px-2 py-1 font-medium text-muted transition-colors hover:bg-sunken hover:text-danger"
+                    >
+                      {t('common.delete')}
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -845,6 +931,29 @@ function AttemptsTable({ quizId, attempts }) {
       ) : null}
 
       <p className="type-micro mt-1.5 text-faint">{t('attempts.note')}</p>
+
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title={t('attempts.deleteTitle')}
+        /* The score is isolated for the same reason the cell above
+           isolates it: "4 / 5" is two number runs either side of a slash,
+           and in the Arabic interface they swap without it - so the
+           dialog would offer to delete an attempt that scored five out
+           of four. */
+        description={t('attempts.deleteDescription', {
+          number: pendingDelete?.number ?? '',
+          score: isolate(pendingDelete?.score ?? ''),
+        })}
+        confirmLabel={t('attempts.deleteConfirm')}
+        busy={deleting}
+        onConfirm={handleDelete}
+        onCancel={() => {
+          setPendingDelete(null)
+          setDeleteError(null)
+        }}
+      >
+        <InlineError message={deleteError} />
+      </ConfirmDialog>
     </section>
   )
 }

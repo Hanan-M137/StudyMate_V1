@@ -377,6 +377,22 @@ export async function getQuizAttempt(quizId, attemptId) {
   }
 }
 
+/**
+ * DELETE /quizzes/{quiz_id}/attempts/{attempt_id}
+ *
+ * One attempt, permanently. The score and the answers stored against it are
+ * the only record that the attempt happened - nothing else refers to the
+ * row - so there is nothing to put back and the caller asks first.
+ *
+ * The quiz id is in the path as well as the attempt id because the server
+ * checks the pair: the attempt has to belong to this quiz AND the quiz has
+ * to belong to the signed-in account. Another account's attempt id answers
+ * 404 here, exactly as a made-up one does.
+ */
+export async function deleteQuizAttempt(quizId, attemptId) {
+  await client.delete(`/quizzes/${quizId}/attempts/${attemptId}`)
+}
+
 function numberOrNull(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))) {

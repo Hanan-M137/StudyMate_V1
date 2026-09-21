@@ -432,15 +432,16 @@ export default function Quizzes() {
                       )}
                     </Field>
                   </div>
-                  {/* Three sentences, joined exactly as they were: the middle
-                      one appears only when the server told us a page count. */}
-                  <p className="type-micro mt-1.5 text-faint">
-                    {t('quiz.pagesHint')}
-                    {formDocumentPageCount
-                      ? ` ${t('quiz.pagesHintCount', { count: formDocumentPageCount })}`
-                      : ''}{' '}
-                    {t('quiz.pagesHintWhole')}
-                  </p>
+                  {/* The page count on its own now. The two sentences that
+                      used to sit either side of it were removed, and with
+                      them gone this paragraph has nothing at all to say when
+                      the server sent no count - so it is not rendered rather
+                      than left as an empty line of margin under the inputs. */}
+                  {formDocumentPageCount ? (
+                    <p className="type-micro mt-1.5 text-faint">
+                      {t('quiz.pagesHintCount', { count: formDocumentPageCount })}
+                    </p>
+                  ) : null}
                 </fieldset>
 
                 {/* Steers generation only. It is not saved with the quiz, so it
@@ -482,8 +483,11 @@ export default function Quizzes() {
                 ) : null}
               </CardBody>
 
-              <CardFooter className="flex flex-wrap items-center justify-between gap-3">
-                <p className="type-small max-w-md text-muted">{t('quiz.footerNote')}</p>
+              {/* The note that used to sit opposite the button is gone, and
+                  `justify-between` with one child left would have swung the
+                  button across to the inline-start. `justify-end` keeps it
+                  where it has always been, at the inline-end of the footer. */}
+              <CardFooter className="flex flex-wrap items-center justify-end gap-3">
                 <Button type="submit" loading={creating}>
                   {creating ? t('quiz.generating') : t('quiz.create')}
                 </Button>

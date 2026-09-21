@@ -114,6 +114,13 @@ export function ConfirmDialog({
   cancelLabel,
   busy = false,
   destructive = true,
+  /* Holds the confirm button shut until the caller says otherwise. Added
+     for the account-deletion dialog, which asks for the password first: a
+     destructive button that is pressable before the condition it depends on
+     is met invites the press and then refuses it. Defaults to false, so
+     every dialog written before this one behaves exactly as it did. */
+  confirmDisabled = false,
+  children,
   onConfirm,
   onCancel,
 }) {
@@ -137,12 +144,20 @@ export function ConfirmDialog({
             variant={destructive ? 'danger' : 'primary'}
             onClick={onConfirm}
             loading={busy}
+            disabled={confirmDisabled}
             data-autofocus
           >
             {confirmLabel ?? t('common.delete')}
           </Button>
         </>
       }
-    />
+    >
+      {/* Anything the dialog needs answered before it can be confirmed.
+          Modal puts children ABOVE the footer, so a field marked
+          data-autofocus in here is found before the confirm button and
+          takes the opening focus - which is what should happen: the
+          student lands on the question, not on the destructive answer. */}
+      {children}
+    </Modal>
   )
 }

@@ -488,16 +488,11 @@ export default {
     pageFromPlaceholder: '1',
     pageToPlaceholder: '20',
 
-    pagesHint: 'تُحسب من أول صفحة في ملف PDF، وهي غالبًا غير الرقم المطبوع على الصفحة.',
     pagesHintCount: 'عدد صفحات هذا المستند: {count}.',
-    pagesHintWhole: 'اترك الحقلين فارغين لاستخدام المستند كاملًا.',
 
     focusLabel: 'على ماذا يركّز؟',
     focusPlaceholder: 'مثال: قواعد بناء فعل الأمر، لا المفردات',
     focusHint: 'يُستخدم أثناء الإنشاء ثم يُهمل. ولا يُحفظ مع الاختبار.',
-
-    footerNote:
-      'تُكتب الأسئلة من هذا المستند وحده. وكل ما ينتجه المولّد خارج الأنواع التي اخترتها يُستبعد قبل حفظ الاختبار.',
 
     generating: 'جارٍ الإنشاء...',
     create: 'أنشئ الاختبار',
@@ -634,6 +629,16 @@ export default {
     loadingAnswers: 'جارٍ تحميل إجاباتك',
     couldNotLoad: 'تعذّر تحميل هذه المحاولة.',
 
+    /* The dialog that deletes one row. The score reaches
+       deleteDescription already isolated, for the reason the table cell
+       isolates it: "4 / 5" is two number runs around a slash and they
+       swap here otherwise. */
+    deleteTitle: 'حذف هذه المحاولة؟',
+    deleteDescription:
+      'المحاولة رقم {number}، ودرجتها {score}. الحذف نهائي ولا يمكن التراجع عنه.',
+    deleteConfirm: 'احذف المحاولة',
+    couldNotDelete: 'تعذّر حذف هذه المحاولة.',
+
     note: 'الأحدث أولًا. وتُراجَع أسئلة الاختيار هنا؛ أما الإجابات المكتوبة فتُعرض إجابتك بجوار الإجابة النموذجية بلا تقييم.',
 
     noAnswers: 'لم تسجّل هذه المحاولة أي إجابات.',
@@ -686,6 +691,33 @@ export default {
     passwordChanged:
       'غُيّرت كلمة المرور. وسُجّل خروج أي جهاز آخر كان داخلًا بهذا الحساب.',
     couldNotChangePassword: 'تعذّر تغيير كلمة مرورك.',
+
+    /* ----------------------------------------------------------------
+       حذف الحساب.
+
+       The one control in the app that destroys something no one can get
+       back, so the Arabic does not soften it either: nothing here says
+       "إيقاف" or "تعطيل", because the account is not deactivated - it is
+       removed. Three separate keys for the heading, the button and the
+       dialog's confirm button, matching en.js and for the same reason.
+
+       The password field reuses settings.currentPassword above. */
+    deleteAccountHeading: 'حذف الحساب',
+    deleteAccountDescription:
+      'يحذف هذا حسابك وكل ما فيه: مستنداتك ومحادثاتك واختباراتك وسجلّ محاولاتك. يتم ذلك فورًا ولا يمكن استرجاع أي شيء بعده.',
+    deleteAccountButton: 'احذف الحساب',
+
+    deleteAccountTitle: 'حذف حسابك؟',
+
+    /* {email} يصل معزولًا من المُستدعي: البريد نص لاتيني داخل جملة
+       عربية، وبلا عزل تنتقل علامات الترقيم إلى طرفه الخطأ. */
+    deleteAccountWarning:
+      'سيُحذف كل ما يخص {email} دفعة واحدة: مستنداتك ومحتوياتها، وكل محادثة ورسالة، وكل اختبار وكل محاولة. ولا يمكن التراجع عن ذلك.',
+
+    deleteAccountPasswordHint: 'أدخل كلمة مرورك للتأكيد.',
+    deleteAccountConfirm: 'احذف حسابي',
+
+    couldNotDeleteAccount: 'تعذّر حذف حسابك.',
   },
 
   /* ========================================================================

@@ -154,6 +154,21 @@ export function AuthProvider({ children }) {
     [loadUser],
   )
 
+  /* Everything sign-out does to THIS browser, and nothing it does to the
+     server. It was the `finally` block of logout(); it is its own function
+     now because deleting an account needs exactly this half and none of the
+     other. Calling /auth/logout after the account row is gone would be a
+     request that is guaranteed to 401 - there is no account left to revoke
+     tokens for, and the deletion already did the revoking by removing the
+     row get_current_user looks the token up against. */
+  const forgetSession = useCallback(() => {
+    clearTokens()
+    writeStored(EMAIL_KEY, null)
+    setEmail(null)
+    setFullName(null)
+    setIsAuthenticated(false)
+  }, [])
+
   /* Sign-out revokes on the server as well as clearing this device.
      /auth/logout raises the account's token_version, and every token carries
      the version it was issued with, so every access and refresh token this
@@ -175,13 +190,9 @@ export function AuthProvider({ children }) {
       /* Already expired, or the server is unreachable. Either way the local
          sign-out below still happens. */
     } finally {
-      clearTokens()
-      writeStored(EMAIL_KEY, null)
-      setEmail(null)
-      setFullName(null)
-      setIsAuthenticated(false)
+      forgetSession()
     }
-  }, [])
+  }, [forgetSession])
 
   /* Used by the settings page after PATCH /auth/me, so the sidebar changes in
      the same moment the save succeeds rather than on the next page load. */
@@ -206,6 +217,7 @@ export function AuthProvider({ children }) {
       register,
       verifyEmail,
       logout,
+      forgetSession,
       applyProfile,
     }),
     [
@@ -216,6 +228,7 @@ export function AuthProvider({ children }) {
       register,
       verifyEmail,
       logout,
+      forgetSession,
       applyProfile,
     ],
   )

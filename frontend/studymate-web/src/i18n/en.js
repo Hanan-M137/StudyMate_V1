@@ -584,18 +584,12 @@ export default {
     pageFromPlaceholder: '1',
     pageToPlaceholder: '20',
 
-    pagesHint:
-      'Counted from the first page of the PDF file, which is often not the number printed on the page.',
     pagesHintCount: 'This document has {count} pages.',
-    pagesHintWhole: 'Leave both empty to use the whole document.',
 
     focusLabel: 'What should it focus on?',
     focusPlaceholder:
       'For example: the rules of building the imperative verb, not the vocabulary',
     focusHint: 'Used while generating, then discarded. It is not saved with the quiz.',
-
-    footerNote:
-      'Questions are written from this document only. Anything the generator produces outside the types you picked is discarded before the quiz is saved.',
 
     generating: 'Generating...',
     create: 'Create quiz',
@@ -752,6 +746,21 @@ export default {
     loadingAnswers: 'Loading your answers',
     couldNotLoad: 'Could not load this attempt.',
 
+    /* Deleting one row of the table. The button says only "Delete" -
+       common.delete - because the row it sits in already says which
+       attempt it belongs to; these four are the dialog that opens.
+
+       deleteDescription carries both the attempt's number and its score,
+       and the score arrives already isolated: "4 / 5" is two number runs
+       either side of a slash, which swap in the Arabic interface and turn
+       four out of five into five out of four. Same reason the table cell
+       isolates it. */
+    deleteTitle: 'Delete this attempt?',
+    deleteDescription:
+      'Attempt {number}, scored {score}. Deleting it is permanent and cannot be undone.',
+    deleteConfirm: 'Delete attempt',
+    couldNotDelete: 'Could not delete this attempt.',
+
     note: 'Newest first. Choice questions are re-checked here; written answers show yours next to the model answer without a mark.',
 
     noAnswers: 'This attempt recorded no answers.',
@@ -811,6 +820,38 @@ export default {
     passwordChanged:
       'Password changed. Any other device signed in to this account has been signed out.',
     couldNotChangePassword: 'Could not change your password.',
+
+    /* ----------------------------------------------------------------
+       Deleting the account.
+
+       The only control in the app that destroys something the student
+       cannot get back by any means, so the wording never softens it:
+       no "deactivate", no "you can restore this later", no mention of a
+       grace period, because there is none of any of that. The heading,
+       the button and the dialog's confirm button are three separate
+       keys on purpose - they name a section, offer an action, and
+       commit to it, and a language that shortens one will not want the
+       other two shortened with it.
+
+       The password field reuses settings.currentPassword above: it is
+       the same field asking for the same thing, in the same role. */
+    deleteAccountHeading: 'Delete account',
+    deleteAccountDescription:
+      'This removes your account and everything in it — your documents, your conversations, your quizzes and your attempt history. It happens immediately and nothing can be restored afterwards.',
+    deleteAccountButton: 'Delete account',
+
+    deleteAccountTitle: 'Delete your account?',
+
+    /* {email} is the student's own address, isolated by the caller: an
+       address is Latin text sitting in an Arabic sentence, and without
+       isolation its punctuation drifts to the wrong end of it. */
+    deleteAccountWarning:
+      'Everything belonging to {email} will be deleted at once: your documents and their contents, every conversation and message, every quiz and every attempt. This cannot be undone.',
+
+    deleteAccountPasswordHint: 'Enter your password to confirm.',
+    deleteAccountConfirm: 'Delete my account',
+
+    couldNotDeleteAccount: 'Could not delete your account.',
   },
 
   /* ========================================================================

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useI18n } from '../context/I18nContext'
-import { changePassword, updateProfile } from '../api/auth'
+import { changePassword, deleteAccount, updateProfile } from '../api/auth'
 import { setTokens } from '../api/tokens'
 import { getErrorMessage } from '../lib/errors'
 import {
@@ -17,6 +18,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  ConfirmDialog,
   Field,
   Input,
   InlineError,
@@ -26,11 +28,18 @@ import {
 /* ==========================================================================
    Settings - appearance, account, and what StudyMate is.
 
-   Three sections and no more. Everything here either works completely or is
-   not on the page: a control that does nothing is worse than no control,
-   because it makes a promise the app cannot keep. The third section holds no
-   control at all - it is the intro video, which is the same card the
-   sign-in page shows and is rendered, heading and all, by the component.
+   Four sections. Everything here either works completely or is not on the
+   page: a control that does nothing is worse than no control, because it
+   makes a promise the app cannot keep. The last section holds no control at
+   all - it is the intro video, which is the same card the sign-in page shows
+   and is rendered, heading and all, by the component.
+
+   WHY DELETING THE ACCOUNT IS ITS OWN CARD rather than a third form inside
+   Account: the two forms above it change something and can be changed back,
+   and this one cannot be undone by any means the app or its owner has. A
+   button that destroys everything, sitting directly under a button that
+   renames you, reads as one more setting. Its own card, below the rest, is
+   what says it is not.
    ========================================================================== */
 
 /* Keys rather than words: THEMES is a list of values from lib/theme.js and
@@ -70,6 +79,7 @@ export default function Settings() {
 
       <AppearanceSection />
       <AccountSection />
+      <DeleteAccountSection />
 
       {/* Last, and a section like the two above it: the space-y-6 on the
           wrapper gives it the same gap, and IntroVideo renders the same
@@ -410,6 +420,121 @@ function PasswordForm() {
     </form>
   )
 }
+
+/* ==========================================================================
+   Delete account
+
+   The only control in this app that destroys data nobody can get back.
+   Confirming it removes the user row, and every document, chunk,
+   conversation, message, quiz, question and attempt hanging off it, at
+   once - there is no soft delete, no grace period and no export first.
+
+   TWO THINGS GUARD IT, and they guard different mistakes. The dialog
+   guards the accidental click: the button here opens a question, not a
+   deletion. The password guards the wrong person: an access token proves
+   only that this browser was signed in at some point, which an unlocked
+   laptop also proves. The server checks the password again regardless -
+   nothing here is trusted - so this field is what makes the refusal
+   land on the student who mistyped rather than on a stranger who
+   guessed nothing.
+   ========================================================================== */
+
+function DeleteAccountSection() {
+  const { t } = useI18n()
+  const { email, forgetSession } = useAuth()
+  const navigate = useNavigate()
+
+  const [open, setOpen] = useState(false)
+  const [password, setPassword] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState(null)
+
+  function close() {
+    setOpen(false)
+    setPassword('')
+    setError(null)
+  }
+
+  async function handleDelete() {
+    setError(null)
+    setDeleting(true)
+
+    try {
+      await deleteAccount({ currentPassword: password })
+
+      /* forgetSession, not logout: POST /auth/logout raises token_version
+         on a user row that no longer exists, so it would be a request
+         guaranteed to 401. The tokens are already dead - get_current_user
+         cannot find the account they name - and this only clears them
+         from the browser.
+
+         replace, so Back does not return to a Settings page belonging to
+         an account that is gone. */
+      forgetSession()
+      navigate('/login', { replace: true })
+    } catch (err) {
+      /* The dialog stays open and keeps what was typed nowhere - the
+         field is cleared by `close()` only. A wrong password is the
+         ordinary failure here, and it should cost one retype rather than
+         reopening the dialog. */
+      setError(getErrorMessage(err, t, 'settings.couldNotDeleteAccount'))
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <h2 className="type-title">{t('settings.deleteAccountHeading')}</h2>
+      </CardHeader>
+
+      <CardBody className="space-y-4">
+        <p className="type-small text-muted">{t('settings.deleteAccountDescription')}</p>
+
+        <Button variant="danger" onClick={() => setOpen(true)}>
+          {t('settings.deleteAccountButton')}
+        </Button>
+      </CardBody>
+
+      <ConfirmDialog
+        open={open}
+        title={t('settings.deleteAccountTitle')}
+        /* isolate() around the address: it is Latin text inside an Arabic
+           sentence, and the sentence's own full stop drifts to the wrong
+           end of it without the isolation. */
+        description={t('settings.deleteAccountWarning', { email: isolate(email ?? '') })}
+        confirmLabel={t('settings.deleteAccountConfirm')}
+        busy={deleting}
+        /* Nothing typed, nothing to confirm with. */
+        confirmDisabled={!password}
+        onConfirm={handleDelete}
+        onCancel={close}
+      >
+        <Field label={t('settings.currentPassword')} required hint={t('settings.deleteAccountPasswordHint')}>
+          {(field) => (
+            <PasswordInput
+              {...field}
+              /* Takes the opening focus ahead of the confirm button, which
+                 Modal would otherwise land on - see ConfirmDialog. */
+              data-autofocus
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => {
+                setError(null)
+                setPassword(event.target.value)
+              }}
+            />
+          )}
+        </Field>
+
+        <div className="mt-3">
+          <InlineError message={error} />
+        </div>
+      </ConfirmDialog>
+    </Card>
+  )
+}
+
 
 /* ==========================================================================
    The counterpart to InlineError

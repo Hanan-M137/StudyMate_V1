@@ -100,6 +100,31 @@ export async function changePassword({ currentPassword, newPassword }) {
 }
 
 /**
+ * DELETE /auth/me - JSON { current_password } -> { message }
+ *
+ * Permanently deletes the signed-in account and everything attached to it.
+ * There is no undo, no grace period and nothing to restore from, which is
+ * why the password is re-entered: the token alone proves the browser, and an
+ * unlocked laptop is a browser somebody else is holding.
+ *
+ * A BODY ON A DELETE, which is unusual enough to say out loud. axios sends
+ * it through `data` rather than as the second argument, and FastAPI reads it
+ * the same way it reads any other Pydantic body. The alternative was a POST
+ * named /auth/delete-account, which would have hidden a deletion behind the
+ * verb this API uses for creating things.
+ *
+ * The caller MUST forget the session afterwards. There is no account left,
+ * so the token this call was made with is already dead - every later request
+ * would 401 and be dragged through the refresh interceptor for nothing.
+ */
+export async function deleteAccount({ currentPassword }) {
+  const { data } = await client.delete('/auth/me', {
+    data: { current_password: currentPassword },
+  })
+  return data
+}
+
+/**
  * POST /auth/verify-email - JSON { email, code } -> TokenResponse.
  *
  * The call that ends registration. It answers with the same token pair

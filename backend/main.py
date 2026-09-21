@@ -24,7 +24,7 @@ from contextlib import asynccontextmanager
 
 from fastapi.security import OAuth2PasswordRequestForm
 
-from sqlalchemy import func
+from sqlalchemy import delete, func
 
 from sqlalchemy.orm import Session
 
@@ -502,6 +502,27 @@ class ChangePasswordRequest(BaseModel):
 
     current_password: str
     new_password: str
+
+
+class AccountDeleteRequest(BaseModel):
+    """
+    The password, again, before the account is destroyed.
+
+    Same reasoning as ChangePasswordRequest above, and more of
+    it. An access token proves that this browser was signed in
+    at some point, which an unlocked laptop also proves. The
+    password is the only thing in the request that separates
+    the account's owner from whoever is sitting at it, and
+    this is the one endpoint where being wrong about that
+    cannot be put right afterwards.
+
+    A plain `str` with no Field constraints, like every other
+    request model in this file: a Field constraint answers with
+    a 422 and a nested error body, and this API answers bad
+    input with a 400 and one sentence a student can read.
+    """
+
+    current_password: str
 
 
 class TokenResponse(BaseModel):
@@ -1600,6 +1621,147 @@ def change_password(
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
+    }
+
+
+# =========================================================
+# CURRENT USER - DELETE THE ACCOUNT
+# =========================================================
+
+@app.delete(
+    "/auth/me"
+)
+def delete_account(
+    account_data: AccountDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Delete this account and everything belonging to it,
+    permanently.
+
+    WHOSE ACCOUNT IS DELETED. current_user, and nothing else.
+    There is no user id in the path, in the query string or in
+    the body, so there is nothing for a caller to put somebody
+    else's id into - the row removed is the one the access
+    token resolved to in get_current_user. The password below
+    is a second check on the person, not on the row.
+
+    WHAT GOES WITH IT. Every foreign key pointing at users is
+    ON DELETE CASCADE in the database itself, and so is every
+    key pointing at documents, conversations and quizzes - so
+    one DELETE takes the documents, their chunks, the
+    conversations, their messages, the quizzes, their questions
+    and attempts, the contact messages and the outstanding
+    verification codes with it. Postgres works the order out;
+    there is no order to get wrong here, and no half-deleted
+    account to be left behind by getting it wrong.
+
+    WHY NOT db.delete(current_user), which is how
+    delete_document and delete_quiz are written. User's
+    relationships are cascade="all, delete-orphan" with no
+    passive_deletes, so the ORM would SELECT every child row
+    into Python before deleting it one at a time - including
+    every chunk of every document, each carrying a 384-value
+    embedding. The Core statement hands the whole job to the
+    database in one round trip. This is the one delete endpoint
+    in the file that does not use the ORM, and that is why.
+
+    IF IT FAILS. A single DELETE is one transaction, so it
+    either removes the account and everything cascading from it
+    or removes nothing at all - there is no partial state for a
+    rollback to clean up. get_db never autocommits, so an
+    exception before db.commit() leaves the account exactly as
+    it was, and the files on disk are still there because they
+    are unlinked last, deliberately.
+
+    THE SESSION ENDS BY ITSELF. token_version is not raised
+    here and does not need to be: get_current_user looks the
+    token's "sub" up in users, and after this there is no row
+    to find, so every token this account holds - on every
+    device - stops being accepted at once.
+    """
+
+    # -----------------------------------------------------
+    # Prove the person, not just the browser
+    # -----------------------------------------------------
+    #
+    # verify_password and the same sentence change_password
+    # uses, so a password that works there works here and
+    # lib/serverErrors.js already translates the refusal.
+
+    if not verify_password(
+        account_data.current_password,
+        current_user.password_hash,
+    ):
+
+        raise HTTPException(
+            status_code=400,
+            detail="Current password is incorrect",
+        )
+
+    # -----------------------------------------------------
+    # The files, noted before the rows that name them
+    # -----------------------------------------------------
+    #
+    # Nothing cascades to the filesystem. documents.file_path
+    # is the only record of where an upload lives, and once the
+    # row is gone there is no way to find the file again - so
+    # the paths are read out first, while they still exist.
+
+    file_paths = [
+        document.file_path
+        for document in (
+            db.query(Document)
+            .filter(
+                Document.user_id == current_user.id,
+            )
+            .all()
+        )
+        if document.file_path
+    ]
+
+    # -----------------------------------------------------
+    # One statement, and the database does the rest
+    # -----------------------------------------------------
+
+    db.execute(
+        delete(User).where(
+            User.id == current_user.id
+        )
+    )
+
+    db.commit()
+
+    # -----------------------------------------------------
+    # Only now the files
+    # -----------------------------------------------------
+    #
+    # AFTER the commit, never before it. Unlinking first would
+    # destroy the uploads and then, if the DELETE failed, leave
+    # a working account whose documents all point at files that
+    # are no longer there.
+    #
+    # A file that will not delete is logged and stepped over. A
+    # leftover file on disk is untidy; an exception here would
+    # turn an account that IS deleted into a 500 telling the
+    # student it was not.
+
+    for file_path in file_paths:
+
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+        except OSError as error:
+            logger.warning(
+                "Could not remove %s after deleting an account: %s",
+                file_path,
+                error,
+            )
+
+    return {
+        "message": "Account deleted successfully"
     }
 
 
@@ -3627,6 +3789,86 @@ def get_quiz_attempt(
 
         "questions": rows,
     }
+
+
+# =========================================================
+# DELETE ONE QUIZ ATTEMPT
+# =========================================================
+
+@app.delete(
+    "/quizzes/{quiz_id}/attempts/{attempt_id}"
+)
+def delete_quiz_attempt(
+    quiz_id: UUID,
+    attempt_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Remove one attempt from a quiz's history, permanently.
+
+    OWNERSHIP IS CHECKED TWICE, and neither check trusts the
+    URL. The quiz is loaded by id AND user_id, so a quiz
+    belonging to somebody else is never found; the attempt is
+    then loaded by id AND that quiz's id AND user_id, so an
+    attempt id lifted from another account cannot be reached
+    through a quiz this account does own. Both user_id values
+    come from current_user, which came from the access token.
+
+    The two 404s say "not found" rather than "not yours" on
+    purpose: an attempt somebody else owns has to be
+    indistinguishable from one that was never there, or the
+    error message itself becomes a way to ask whether a given
+    id exists.
+
+    The row goes on its own. Nothing in the schema references
+    quiz_attempts, so there is no cascade and nothing to order
+    - and the quiz, its questions and every other attempt are
+    untouched. The score and the answers stored on this row are
+    the only record that the attempt happened, so the interface
+    asks before calling this.
+    """
+
+    quiz = (
+        db.query(Quiz)
+        .filter(
+            Quiz.id == quiz_id,
+            Quiz.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not quiz:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Quiz not found",
+        )
+
+    attempt = (
+        db.query(QuizAttempt)
+        .filter(
+            QuizAttempt.id == attempt_id,
+            QuizAttempt.quiz_id == quiz.id,
+            QuizAttempt.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not attempt:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Attempt not found",
+        )
+
+    db.delete(attempt)
+    db.commit()
+
+    return {
+        "message": "Attempt deleted successfully"
+    }
+
 
 # =========================================================
 # UPDATE QUIZ - RENAME OR PIN
