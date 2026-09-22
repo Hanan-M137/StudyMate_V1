@@ -5,8 +5,9 @@ import { getConversation } from '../api/conversations'
 import { sendChatMessage } from '../api/chat'
 import { useI18n } from '../context/I18nContext'
 import { getErrorMessage } from '../lib/errors'
-import { contentDir } from '../lib/language'
+import { contentDir, dominantDir } from '../lib/language'
 import { splitCodeSegments } from '../lib/code'
+import MarkdownAnswer from '../components/MarkdownAnswer'
 import SourceList from '../components/SourceList'
 import VoiceInput from '../components/VoiceInput'
 import { ChatIcon, SparkIcon } from '../components/icons'
@@ -353,7 +354,7 @@ export default function DocumentChat() {
 }
 
 export function MessageBubble({ message }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
 
   const isUser = message.role === 'user'
 
@@ -369,6 +370,21 @@ export function MessageBubble({ message }) {
     )
   }
 
+  /* Split once and used twice: to render, and to decide the direction the
+     whole answer is laid out in.
+
+     The direction comes from the PROSE only. A short Arabic explanation
+     wrapped around a long Java listing is still an Arabic answer, and
+     counting the listing's letters would hand it to left-to-right on the
+     strength of code the student is not reading as language. The listing
+     sets its own direction regardless, below. */
+  const segments = message.content ? splitCodeSegments(message.content) : []
+
+  const prose = segments
+    .filter((segment) => segment.type === 'prose')
+    .map((segment) => segment.text)
+    .join('\n')
+
   return (
     <li className="animate-enter flex gap-3">
       <span
@@ -379,33 +395,57 @@ export function MessageBubble({ message }) {
       </span>
       <Card className="measure min-w-0 flex-1 px-4 py-3.5">
         {/* The answer is written in the language of the document, which is
-            not necessarily the language of the interface around it. */}
+            not necessarily the language of the interface around it.
+
+            ONE DIRECTION FOR THE WHOLE ANSWER, not one per paragraph as
+            before. An answer is entirely in a single language - the system
+            prompt is explicit that the two are never mixed within one
+            answer - so there is nothing to gain from deciding again at
+            every paragraph, and something to lose: a Markdown table whose
+            first cell happens to hold a Latin method name would resolve to
+            left-to-right on its own and sit backwards inside an otherwise
+            Arabic answer. Deciding once is what makes the table read
+            right-to-left when the answer is Arabic; the table inherits it
+            and needs no direction of its own.
+
+            dominantDir rather than dir="auto", and this is not a
+            preference - it is the bug the first Arabic test answer showed.
+            `auto` takes the first strong character and no more, and that
+            answer opened with the class name it was about, so an answer
+            with 481 Arabic letters in it laid out left-to-right end to
+            end. See lib/language.js for the measurement. */}
         {message.content ? (
-          splitCodeSegments(message.content).map((segment, index) =>
-            segment.type === 'code' ? (
-              /* Braces and brackets are bidi-mirrored, and ';' and '=' take
-                 the direction of the paragraph around them, so code inside
-                 an Arabic answer reorders into nonsense unless it is given
-                 its own direction here. Same reasoning as the address in
-                 VerifyEmailPanel: it is its own element, not interpolated
-                 into the sentence. */
-              <pre
-                key={index}
-                dir="ltr"
-                className="type-small my-2 overflow-x-auto whitespace-pre-wrap break-words font-mono text-ink"
-              >
-                {segment.text}
-              </pre>
-            ) : (
-              <p
-                key={index}
-                dir="auto"
-                className="type-body mb-2 whitespace-pre-line text-ink last:mb-0"
-              >
-                {segment.text}
-              </p>
-            ),
-          )
+          <div dir={dominantDir(prose, lang)} className="min-w-0">
+            {segments.map((segment, index) =>
+              segment.type === 'code' ? (
+                /* Braces and brackets are bidi-mirrored, and ';' and '=' take
+                   the direction of the paragraph around them, so code inside
+                   an Arabic answer reorders into nonsense unless it is given
+                   its own direction here. Same reasoning as the address in
+                   VerifyEmailPanel: it is its own element, not interpolated
+                   into the sentence.
+
+                   Why the split survives the move to Markdown: a Markdown
+                   renderer only ever sees code that was marked up as code,
+                   and Claude fences its listings some of the time and not
+                   others - both came back from the same question asked
+                   twice, which is what lib/code.js exists for. Handing the
+                   unfenced run to the renderer as prose would have quietly
+                   dropped the isolation for exactly the answers that needed
+                   it most. Prose goes through Markdown; code does not, and
+                   keeps the element it always had. */
+                <pre
+                  key={index}
+                  dir="ltr"
+                  className="type-small my-2 overflow-x-auto whitespace-pre-wrap break-words font-mono text-ink"
+                >
+                  {segment.text}
+                </pre>
+              ) : (
+                <MarkdownAnswer key={index} text={segment.text} />
+              ),
+            )}
+          </div>
         ) : (
           <p dir="auto" className="type-body whitespace-pre-line text-ink">
             <em className="text-muted">{t('chat.emptyAnswer')}</em>

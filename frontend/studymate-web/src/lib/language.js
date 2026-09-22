@@ -208,6 +208,60 @@ export function textDir(value, lang) {
   return interfaceDir(lang)
 }
 
+/* ==========================================================================
+   The direction of a whole passage, where 'auto' is not good enough
+   ========================================================================== */
+
+/* \p{Script=...} rather than a character range, for the reason lib/code.js
+   and lib/password.js both give: the question is which script a letter
+   belongs to, and Unicode already knows.
+
+   There is a near-twin of this counting inside lib/code.js. It is left
+   there rather than shared, because it is answering a different question -
+   whether one LINE is a line of code - and joining the two would tie a
+   direction decision to a code-detection heuristic that has its own
+   reasons to change. */
+const ARABIC_LETTER = /\p{Script=Arabic}/gu
+const LATIN_LETTER = /\p{Script=Latin}/gu
+
+/**
+ * A resolved 'rtl' or 'ltr' for a passage that must be laid out as one unit.
+ *
+ * WHY NOT dir="auto". `auto` takes the FIRST strong character and nothing
+ * else, and an Arabic answer about Java routinely opens with the class name
+ * it is about. Measured on a real answer from the Java Collections
+ * document: it began "ArrayList هي كلاس في جافا", and carried 481 Arabic
+ * letters against 368 Latin ones - the Latin almost entirely class names
+ * inside the sentences and the code listing. `auto` read the 'A', returned
+ * left-to-right, and laid out an Arabic answer backwards from end to end.
+ *
+ * Counting the letters answers the question `auto` is a proxy for: which
+ * script is this passage actually written in. A tie falls to
+ * left-to-right - not a judgement, just the HTML default, and a passage
+ * with equal amounts of both has no better answer available.
+ *
+ * Only for a passage that needs ONE direction throughout, such as a chat
+ * answer whose table and list have to agree with the prose around them.
+ * For a single line or a field, textDir and contentDir above are still
+ * right: there `auto` reads the real first strong character and is better
+ * than any count.
+ *
+ * @param value  the passage that will be rendered
+ * @param lang   the interface language, from useI18n()
+ */
+export function dominantDir(value, lang) {
+  if (typeof value !== 'string' || value === '') return interfaceDir(lang)
+
+  const arabic = (value.match(ARABIC_LETTER) || []).length
+  const latin = (value.match(LATIN_LETTER) || []).length
+
+  /* Neither script present at all - a formula, a row of figures - is the
+     same case textDir falls back on, and takes the same answer. */
+  if (arabic === 0 && latin === 0) return interfaceDir(lang)
+
+  return arabic > latin ? 'rtl' : 'ltr'
+}
+
 /* The interface's own direction, for the two functions above to fall back
    on. One expression, one place: they are answering the same question when
    the content cannot answer it. */
