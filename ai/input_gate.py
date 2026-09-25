@@ -81,6 +81,25 @@ CLOSING_PATTERNS = {
 
 TRIVIAL_PATTERNS = GREETING_PATTERNS | CLOSING_PATTERNS
 
+# Everyday Arabic small talk that students type but the lists
+# above lack. Matched only by the Arabic keyword path below.
+#
+# Kept out of TRIVIAL_PATTERNS on purpose: that set also seeds
+# TRIVIAL_REFERENCE_PHRASES, so adding phrases there would move
+# the English semantic scores, which this list must not do.
+#
+# Each entry is a complete message on its own. Matching is
+# exact whole-message membership, so a phrase here can only
+# ever match a message that IS that phrase.
+ARABIC_DIALECT_PATTERNS = {
+    "مشكور",
+    "يسلمو",
+    "تسلم",
+    "باي",
+    "صباح النور",
+    "مساء النور",
+}
+
 
 CANNED_REPLY_EN = (
     "Hi! I'm StudyMate, your study assistant. "
@@ -141,39 +160,26 @@ TRIVIAL_MAX_WORDS = 6
 # question sample that includes conversational wording.
 TRIVIAL_SIMILARITY_THRESHOLD = 0.58
 
-# The semantic fallback is applied to non-Arabic messages
-# only. This is not a preference, it is a measurement.
+# Arabic never reaches the semantic fallback: it uses the
+# normalized keyword match and nothing else. Both candidate
+# models were measured on this task, and neither separates
+# Arabic greetings from real Arabic questions:
 #
-# all-MiniLM-L6-v2 is English-trained and carries no usable
-# Arabic semantics. Measured over 9 Arabic greetings and 10
-# real Arabic questions against the full reference list:
-#     greetings   0.7111 - 0.9718
-#     questions   0.6725 - 0.8731
-# The two ranges overlap almost entirely, so no threshold
-# separates them: at any cut-off low enough to catch every
-# greeting, 9 of the 10 real questions are swallowed and
-# answered with a canned reply instead of a real one.
+#   all-MiniLM-L6-v2 - greetings 0.7111-0.9718, questions
+#     0.6725-0.8731; at any cut-off that catches every
+#     greeting, 9 of 10 real questions are swallowed.
+#   multilingual-e5-small (commit 4bce461, 2026-09-11) -
+#     6 of 20 real questions swallowed.
+#   multilingual-e5-small re-measured 2026-09-25 with the
+#     "query: " prefix on both sides - 15 of 20 real
+#     questions score at or above the lowest greeting
+#     (0.8383), and a threshold set for zero swallowed
+#     questions on one half of the sample swallowed one
+#     ("مرحبا، ما هو المبتدأ؟") on the other half.
 #
-# The scores also show the model is not reading Arabic
-# meaning at all. Most Arabic questions match "مع السلامة"
-# ("goodbye") most closely - "ما هو الفاعل" ("what is the
-# subject of a sentence") scores 0.8437 against it - and the
-# only high greeting scores come from literal word overlap
-# with a reference phrase, not from understanding.
-#
-# This is the same model weakness that rag_service.py used to
-# compensate for with hybrid search and reranking. Retrieval
-# has since moved to multilingual-e5-small, which reads Arabic
-# properly; this gate deliberately did not move with it, for
-# the reason given at the top of the file.
-#
-# e5 was measured on this gate's own task anyway, in case it
-# could unlock Arabic here: it narrows the overlap sharply -
-# 6 of 20 real Arabic questions swallowed instead of 19 - but
-# it does not remove it, so Arabic stays suppressed. The
-# similarity is still computed and logged below, so
-# calibration data keeps accumulating from real traffic.
-APPLY_SEMANTIC_FALLBACK_TO_ARABIC = False
+# A swallowed question costs the student their answer; a
+# missed greeting costs one retrieval. So Arabic gets no
+# model until one separates the two cleanly.
 
 # The reference phrases an incoming message is compared
 # against: every exact-match pattern above, plus natural
@@ -309,6 +315,92 @@ def _normalize(message: str) -> str:
 
 
 # =========================================================
+# ARABIC NORMALIZATION
+# =========================================================
+#
+# Exact matching treats one Arabic greeting spelled several
+# ways as different strings: with or without diacritics
+# (شُكْرًا / شكرا), with any alef form (أهلا / اهلا), ة or ه at
+# the end (العافية / العافيه), ى or ي (إلى / الى). The same
+# folding is applied to the patterns and to the message, so
+# the comparison is still an exact whole-message match - only
+# the spelling noise is gone.
+#
+# These rules are exactly the configuration measured on
+# 2026-09-25 over 40 Arabic messages (20 small talk, 20 real
+# questions): 0 real questions swallowed, and greetings caught
+# up from 0 of 20 to 7 of 20. Changing a rule invalidates that
+# measurement.
+
+# Harakat and tanween (U+064B-U+0652), dagger alef (U+0670),
+# tatweel (U+0640).
+ARABIC_DIACRITICS_PATTERN = re.compile(r"[\u064B-\u0652\u0670\u0640]")
+
+ALEF_VARIANTS_PATTERN = re.compile(r"[أإآ]")
+
+# Single-letter prefixes (و "and", ف "so", ب "with") that
+# attach directly to the next word: "وشكرا".
+ARABIC_ATTACHED_PREFIXES = ("و", "ف", "ب")
+
+ARABIC_DEFINITE_ARTICLE = "ال"
+
+
+def _normalize_arabic(text: str) -> str:
+    """
+    Strip diacritics and tatweel, and fold alef, ta marbuta
+    and alef maqsura to one form each.
+    """
+
+    text = ARABIC_DIACRITICS_PATTERN.sub("", text)
+    text = ALEF_VARIANTS_PATTERN.sub("ا", text)
+    text = text.replace("ة", "ه").replace("ى", "ي")
+
+    return text
+
+
+ARABIC_TRIVIAL_PATTERNS = {
+    _normalize_arabic(pattern)
+    for pattern in TRIVIAL_PATTERNS | ARABIC_DIALECT_PATTERNS
+}
+
+
+def _is_arabic_trivial(normalized: str) -> bool:
+    """
+    Normalized exact match for an Arabic message.
+
+    Every rule below still requires the WHOLE message to be a
+    pattern. A prefix or article is only removed or added when
+    the result is itself a pattern, so "مرحبا، ما هو المبتدأ"
+    can never match "مرحبا".
+    """
+
+    folded = _normalize_arabic(normalized)
+
+    if folded in ARABIC_TRIVIAL_PATTERNS:
+        return True
+
+    # One attached prefix: "وشكرا" -> "شكرا".
+    if (
+        folded[:1] in ARABIC_ATTACHED_PREFIXES
+        and folded[1:] in ARABIC_TRIVIAL_PATTERNS
+    ):
+        return True
+
+    # With or without the definite article:
+    # "سلام عليكم" <-> "السلام عليكم".
+    if (
+        folded.startswith(ARABIC_DEFINITE_ARTICLE)
+        and folded[len(ARABIC_DEFINITE_ARTICLE):] in ARABIC_TRIVIAL_PATTERNS
+    ):
+        return True
+
+    if ARABIC_DEFINITE_ARTICLE + folded in ARABIC_TRIVIAL_PATTERNS:
+        return True
+
+    return False
+
+
+# =========================================================
 # SEMANTIC TRIVIALITY CHECK
 # =========================================================
 
@@ -321,9 +413,11 @@ def _is_semantically_trivial(normalized: str) -> bool:
     Returns True only when the message is both short enough
     (TRIVIAL_MAX_WORDS) and close enough to a reference
     phrase (TRIVIAL_SIMILARITY_THRESHOLD). Anything else -
-    including an Arabic message, and including any failure to
-    embed - returns False, so the message is treated as a
-    real question.
+    including any failure to embed - returns False, so the
+    message is treated as a real question.
+
+    Arabic messages never reach this function; should_call_llm
+    routes them to the keyword match only.
     """
 
     word_count = len(normalized.split())
@@ -362,30 +456,17 @@ def _is_semantically_trivial(normalized: str) -> bool:
             best_similarity = similarity
             best_phrase = phrase
 
-    is_similar_enough = best_similarity >= TRIVIAL_SIMILARITY_THRESHOLD
-
-    # See APPLY_SEMANTIC_FALLBACK_TO_ARABIC above: the score is
-    # still computed and logged for Arabic, so the threshold can
-    # be calibrated from real traffic, but it never decides the
-    # verdict, because on this model it is not trustworthy for
-    # Arabic and a wrong "trivial" costs the student their answer.
-    is_arabic = _looks_arabic(normalized)
-    suppressed_for_arabic = is_arabic and not APPLY_SEMANTIC_FALLBACK_TO_ARABIC
-
-    is_trivial = is_similar_enough and not suppressed_for_arabic
+    is_trivial = best_similarity >= TRIVIAL_SIMILARITY_THRESHOLD
 
     # TEMPORARY diagnostic logging: kept only until
     # TRIVIAL_SIMILARITY_THRESHOLD has been calibrated against
     # real student messages. Remove once that value is settled.
     logger.info(
         "Input gate semantic check | word_count=%s | "
-        "best_similarity=%.4f | best_phrase=%r | arabic=%s | "
-        "suppressed_for_arabic=%s | trivial=%s",
+        "best_similarity=%.4f | best_phrase=%r | trivial=%s",
         word_count,
         best_similarity,
         best_phrase,
-        is_arabic,
-        suppressed_for_arabic,
         is_trivial,
     )
 
@@ -436,6 +517,22 @@ def should_call_llm(message: str) -> tuple[bool, str | None]:
     # -----------------------------------------------------
 
     if not normalized:
+        return True, None
+
+    # -----------------------------------------------------
+    # Arabic: normalized keyword match only, never the model
+    # -----------------------------------------------------
+    #
+    # Routed on the normalized text - the same condition that
+    # used to suppress the model's verdict for Arabic - so
+    # every message that used to get a model verdict still
+    # gets one, and no other message is embedded.
+
+    if _looks_arabic(normalized):
+
+        if _is_arabic_trivial(normalized):
+            return False, CANNED_REPLY_AR
+
         return True, None
 
     # -----------------------------------------------------
